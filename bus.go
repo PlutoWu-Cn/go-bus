@@ -9,14 +9,15 @@ import (
 
 // EventBus - box for handlers and callbacks.
 type EventBus[T any] struct {
-	handlers      map[string][]*eventHandler[T]
-	middlewares   []EventMiddleware[any]
-	errorHandler  ErrorHandler
-	metrics       *EventMetrics
-	lock          sync.RWMutex
-	wg            sync.WaitGroup
-	closed        bool
-	closeCh       chan struct{}
+	handlers     map[string][]*eventHandler[T]
+	middlewares  []EventMiddleware[any]
+	errorHandler ErrorHandler
+	metrics      *EventMetrics
+	logger       Logger
+	lock         sync.RWMutex
+	wg           sync.WaitGroup
+	closed       bool
+	closeCh      chan struct{}
 }
 
 // NewTyped returns new EventBus with empty handlers for the specified type.
@@ -25,6 +26,7 @@ func NewTyped[T any]() Bus[T] {
 		handlers:    make(map[string][]*eventHandler[T]),
 		middlewares: make([]EventMiddleware[any], 0),
 		metrics:     &EventMetrics{},
+		logger:      NewDefaultLogger(),
 		lock:        sync.RWMutex{},
 		wg:          sync.WaitGroup{},
 		closed:      false,
@@ -42,15 +44,15 @@ func New() Bus[any] {
 func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHandler[T]) error {
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
-	
+
 	if bus.closed {
 		return fmt.Errorf("event bus is closed")
 	}
-	
+
 	// Insert handler based on priority
 	handlers := bus.handlers[topic]
 	inserted := false
-	
+
 	for i, h := range handlers {
 		if handler.priority > h.priority {
 			// Insert before this handler
@@ -59,13 +61,19 @@ func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHand
 			break
 		}
 	}
-	
+
 	if !inserted {
 		handlers = append(handlers, handler)
 	}
-	
+
 	bus.handlers[topic] = handlers
 	bus.metrics.IncrementSubscribers()
+
+	// Log subscription
+	if bus.logger != nil {
+		bus.logger.Debug("Handler subscribed to topic '%s' with priority %v", topic, handler.priority)
+	}
+
 	return nil
 }
 
@@ -73,15 +81,15 @@ func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHand
 func (bus *EventBus[T]) doSubscribeWithHandle(topic string, fn func(T), handler *eventHandler[T]) *Handle[T] {
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
-	
+
 	if bus.closed {
 		return nil
 	}
-	
+
 	// Insert handler based on priority (same logic as doSubscribe)
 	handlers := bus.handlers[topic]
 	inserted := false
-	
+
 	for i, h := range handlers {
 		if handler.priority > h.priority {
 			handlers = append(handlers[:i], append([]*eventHandler[T]{handler}, handlers[i:]...)...)
@@ -89,14 +97,19 @@ func (bus *EventBus[T]) doSubscribeWithHandle(topic string, fn func(T), handler 
 			break
 		}
 	}
-	
+
 	if !inserted {
 		handlers = append(handlers, handler)
 	}
-	
+
 	bus.handlers[topic] = handlers
 	bus.metrics.IncrementSubscribers()
-	
+
+	// Log subscription
+	if bus.logger != nil {
+		bus.logger.Debug("Handler subscribed to topic '%s' with priority %v (with handle)", topic, handler.priority)
+	}
+
 	return &Handle[T]{
 		bus:      bus,
 		topic:    topic,
@@ -245,13 +258,18 @@ func (bus *EventBus[T]) Publish(topic string, event T) {
 func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, event T) error {
 	bus.lock.RLock()
 	defer bus.lock.RUnlock()
-	
+
 	if bus.closed {
 		return fmt.Errorf("event bus is closed")
 	}
-	
+
+	// Log event publishing
+	if bus.logger != nil {
+		bus.logger.Debug("Publishing event to topic '%s'", topic)
+	}
+
 	bus.metrics.IncrementPublished()
-	
+
 	// Apply middlewares
 	for _, middleware := range bus.middlewares {
 		if err := middleware(topic, event, func() {}); err != nil {
@@ -265,15 +283,15 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 			return err
 		}
 	}
-	
+
 	if handlers, ok := bus.handlers[topic]; ok && 0 < len(handlers) {
 		// Create a copy to avoid modification during iteration
 		copyHandlers := make([]*eventHandler[T], len(handlers))
 		copy(copyHandlers, handlers)
-		
+
 		// Check if we have a deadline (timeout)
 		_, hasDeadline := ctx.Deadline()
-		
+
 		for i, handler := range copyHandlers {
 			// Check context cancellation
 			select {
@@ -283,7 +301,7 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 				return fmt.Errorf("event bus is closed")
 			default:
 			}
-			
+
 			// Check handler context
 			if handler.ctx != nil {
 				select {
@@ -292,21 +310,21 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 				default:
 				}
 			}
-			
+
 			// Apply filter if present
 			if handler.filter != nil && !handler.filter(topic, event) {
 				continue
 			}
-			
+
 			if handler.flagOnce {
 				bus.removeHandler(topic, i)
 			}
-			
+
 			if !handler.async {
 				if hasDeadline {
 					// For synchronous handlers with timeout, run in a goroutine
 					done := make(chan error, 1)
-					
+
 					go func() {
 						defer func() {
 							if r := recover(); r != nil {
@@ -327,7 +345,7 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 						}()
 						handler.callBack(event)
 					}()
-					
+
 					select {
 					case err := <-done:
 						if err != nil {
@@ -353,7 +371,7 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -367,6 +385,9 @@ func (bus *EventBus[T]) PublishWithTimeout(topic string, event T, timeout time.D
 func (bus *EventBus[T]) doPublish(handler *eventHandler[T], topic string, event T) {
 	defer func() {
 		if r := recover(); r != nil {
+			if bus.logger != nil {
+				bus.logger.Error("Handler panic for topic '%s': %v", topic, r)
+			}
 			if bus.errorHandler != nil {
 				bus.errorHandler(&EventError{
 					Topic:   topic,
@@ -378,9 +399,12 @@ func (bus *EventBus[T]) doPublish(handler *eventHandler[T], topic string, event 
 			bus.metrics.IncrementFailed()
 			return
 		}
+		if bus.logger != nil {
+			bus.logger.Debug("Handler executed successfully for topic '%s'", topic)
+		}
 		bus.metrics.IncrementProcessed()
 	}()
-	
+
 	handler.callBack(event)
 }
 
@@ -391,7 +415,7 @@ func (bus *EventBus[T]) doPublishAsync(handler *eventHandler[T], topic string, e
 			handler.Unlock()
 		}
 	}()
-	
+
 	bus.doPublish(handler, topic, event)
 }
 
@@ -409,6 +433,11 @@ func (bus *EventBus[T]) removeHandler(topic string, idx int) {
 	bus.handlers[topic][l-1] = nil
 	bus.handlers[topic] = bus.handlers[topic][:l-1]
 	bus.metrics.DecrementSubscribers()
+
+	// Log handler removal
+	if bus.logger != nil {
+		bus.logger.Debug("Handler removed from topic '%s'", topic)
+	}
 }
 
 // WaitAsync waits for all async callbacks to complete
@@ -435,11 +464,25 @@ func (bus *EventBus[T]) AddMiddleware(middleware EventMiddleware[any]) {
 	bus.middlewares = append(bus.middlewares, middleware)
 }
 
+// SetLogger sets the logger for the bus
+func (bus *EventBus[T]) SetLogger(logger Logger) {
+	bus.lock.Lock()
+	defer bus.lock.Unlock()
+	bus.logger = logger
+}
+
+// GetLogger returns the current logger
+func (bus *EventBus[T]) GetLogger() Logger {
+	bus.lock.RLock()
+	defer bus.lock.RUnlock()
+	return bus.logger
+}
+
 // GetTopics returns all topics that have subscribers
 func (bus *EventBus[T]) GetTopics() []string {
 	bus.lock.RLock()
 	defer bus.lock.RUnlock()
-	
+
 	topics := make([]string, 0, len(bus.handlers))
 	for topic := range bus.handlers {
 		topics = append(topics, topic)
@@ -451,7 +494,7 @@ func (bus *EventBus[T]) GetTopics() []string {
 func (bus *EventBus[T]) GetSubscriberCount(topic string) int {
 	bus.lock.RLock()
 	defer bus.lock.RUnlock()
-	
+
 	if handlers, ok := bus.handlers[topic]; ok {
 		return len(handlers)
 	}
@@ -462,19 +505,19 @@ func (bus *EventBus[T]) GetSubscriberCount(topic string) int {
 func (bus *EventBus[T]) Close() error {
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
-	
+
 	if bus.closed {
 		return fmt.Errorf("event bus already closed")
 	}
-	
+
 	bus.closed = true
 	close(bus.closeCh)
-	
+
 	// Wait for all async operations to complete
 	bus.wg.Wait()
-	
+
 	// Clear all handlers
 	bus.handlers = make(map[string][]*eventHandler[T])
-	
+
 	return nil
-} 
+}
