@@ -21,25 +21,29 @@ type Handle[T any] struct {
 func (h *Handle[T]) Unsubscribe() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	if h.handler == nil {
 		return fmt.Errorf("handle already unsubscribed")
 	}
-	
+
 	h.bus.lock.Lock()
 	defer h.bus.lock.Unlock()
-	
+
 	if handlers, ok := h.bus.handlers[h.topic]; ok {
 		for i, handler := range handlers {
 			if handler == h.handler {
+				// Log unsubscription
+				if h.bus.logger != nil {
+					h.bus.logger.Debug("Unsubscribing handler from topic '%s'", h.topic)
+				}
 				h.bus.removeHandler(h.topic, i)
 				h.handler = nil
-				h.bus.metrics.DecrementSubscribers()
+				// Note: removeHandler already calls DecrementSubscribers, so we don't call it again
 				return nil
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("handler not found for topic %s", h.topic)
 }
 
@@ -60,4 +64,4 @@ type eventHandler[T any] struct {
 	filter        EventFilter[T]
 	ctx           context.Context
 	sync.Mutex    // lock for an event handler - useful for running async callbacks serially
-} 
+}

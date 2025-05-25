@@ -32,6 +32,8 @@ type BusController interface {
 	GetMetrics() *EventMetrics
 	SetErrorHandler(handler ErrorHandler)
 	AddMiddleware(middleware EventMiddleware[any])
+	SetLogger(logger Logger)
+	GetLogger() Logger
 	GetTopics() []string
 	GetSubscriberCount(topic string) int
 	Close() error
@@ -42,4 +44,4 @@ type Bus[T any] interface {
 	BusController
 	BusSubscriber[T]
 	BusPublisher[T]
-} 
+}

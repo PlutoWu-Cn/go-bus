@@ -4,6 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/plutowu/go-bus.svg)](https://pkg.go.dev/github.com/plutowu/go-bus)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/plutowu/go-bus)](https://goreportcard.com/report/github.com/plutowu/go-bus)
+[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/plutowu/go-bus)
 
 一个现代化的、高性能的 Go 事件总线实现，支持泛型、异步处理、优先级、过滤器等企业级功能。
 
@@ -379,6 +380,16 @@ eventBus.SubscribeWithFilter("user.activity", handler, func(topic string, event 
 ```bash
 go test -v ./...
 ```
+
+生成测试覆盖率报告：
+
+```bash
+go test -cover ./...
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+**当前测试覆盖率：92.2%** - 我们保持高测试覆盖率以确保可靠性和稳定性。
 
 运行性能测试：
 
