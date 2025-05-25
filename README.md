@@ -4,6 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/plutowu/go-bus.svg)](https://pkg.go.dev/github.com/plutowu/go-bus)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/plutowu/go-bus)](https://goreportcard.com/report/github.com/plutowu/go-bus)
+[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/plutowu/go-bus)
 
 A modern, high-performance Go event bus implementation with type safety, async processing, priority handling, filters, and enterprise-grade features.
 
@@ -379,6 +380,16 @@ Run the complete test suite:
 ```bash
 go test -v ./...
 ```
+
+Generate test coverage report:
+
+```bash
+go test -cover ./...
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+**Current test coverage: 92.2%** - We maintain high test coverage to ensure reliability and stability.
 
 Run performance benchmarks:
 
