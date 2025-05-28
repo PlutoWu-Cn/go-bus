@@ -6,6 +6,8 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/plutowu/go-bus)](https://goreportcard.com/report/github.com/plutowu/go-bus)
 [![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/plutowu/go-bus)
 
+![Background](assets/background.jpg)
+
 一个现代化的、高性能的 Go 事件总线实现，支持泛型、异步处理、优先级、过滤器等企业级功能。
 
 [English Documentation](README.md)
