@@ -29,7 +29,7 @@ type BusPublisher[T any] interface {
 type BusController interface {
 	HasCallback(topic string) bool
 	WaitAsync()
-	GetMetrics() *EventMetrics
+	GetMetrics() Metrics
 	SetErrorHandler(handler ErrorHandler)
 	AddMiddleware(middleware EventMiddleware[any])
 	SetLogger(logger Logger)
