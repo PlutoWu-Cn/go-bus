@@ -2,8 +2,18 @@ package bus
 
 import "sync"
 
-// EventMetrics provides monitoring capabilities
-type EventMetrics struct {
+// Metrics defines the monitoring interface for the event bus
+type Metrics interface {
+	IncrementPublished()
+	IncrementProcessed()
+	IncrementFailed()
+	IncrementSubscribers()
+	DecrementSubscribers()
+	GetStats() (published, processed, failed int64, activeSubscribers int32)
+}
+
+// DefaultMetrics is the default implementation of the Metrics interface
+type DefaultMetrics struct {
 	PublishedEvents   int64
 	ProcessedEvents   int64
 	FailedEvents      int64
@@ -11,38 +21,38 @@ type EventMetrics struct {
 	mu                sync.RWMutex
 }
 
-func (m *EventMetrics) IncrementPublished() {
+func (m *DefaultMetrics) IncrementPublished() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.PublishedEvents++
 }
 
-func (m *EventMetrics) IncrementProcessed() {
+func (m *DefaultMetrics) IncrementProcessed() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ProcessedEvents++
 }
 
-func (m *EventMetrics) IncrementFailed() {
+func (m *DefaultMetrics) IncrementFailed() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.FailedEvents++
 }
 
-func (m *EventMetrics) IncrementSubscribers() {
+func (m *DefaultMetrics) IncrementSubscribers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ActiveSubscribers++
 }
 
-func (m *EventMetrics) DecrementSubscribers() {
+func (m *DefaultMetrics) DecrementSubscribers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ActiveSubscribers--
 }
 
-func (m *EventMetrics) GetStats() (published, processed, failed int64, activeSubscribers int32) {
+func (m *DefaultMetrics) GetStats() (published, processed, failed int64, activeSubscribers int32) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.PublishedEvents, m.ProcessedEvents, m.FailedEvents, m.ActiveSubscribers
-} 
+}

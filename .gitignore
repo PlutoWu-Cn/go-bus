@@ -23,3 +23,17 @@ go.work.sum
 
 # env file
 .env
+
+# VSCode specific files
+.vscode/*
+*.code-workspace
+.history/
+
+# JetBrains IDE specific files
+.idea/
+*.iml
+*.iws
+*.ipr
+*.iws
+.idea_modules/
+out/

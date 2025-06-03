@@ -12,7 +12,7 @@ type EventBus[T any] struct {
 	handlers     map[string][]*eventHandler[T]
 	middlewares  []EventMiddleware[any]
 	errorHandler ErrorHandler
-	metrics      *EventMetrics
+	metrics      Metrics
 	logger       Logger
 	lock         sync.RWMutex
 	wg           sync.WaitGroup
@@ -20,24 +20,58 @@ type EventBus[T any] struct {
 	closeCh      chan struct{}
 }
 
+// Option defines a functional option for EventBus
+type Option[T any] func(*EventBus[T])
+
+// WithMetrics allows custom Metrics implementation
+func WithMetrics[T any](metrics Metrics) Option[T] {
+	return func(b *EventBus[T]) {
+		b.metrics = metrics
+	}
+}
+
+// WithLogger sets a custom logger for the EventBus
+func WithLogger[T any](logger Logger) Option[T] {
+	return func(b *EventBus[T]) {
+		b.logger = logger
+	}
+}
+
+// WithErrorHandler sets a custom error handler for the EventBus
+func WithErrorHandler[T any](handler ErrorHandler) Option[T] {
+	return func(b *EventBus[T]) {
+		b.errorHandler = handler
+	}
+}
+
+// WithMiddleware adds a middleware to the EventBus
+func WithMiddleware[T any](middleware EventMiddleware[any]) Option[T] {
+	return func(b *EventBus[T]) {
+		b.middlewares = append(b.middlewares, middleware)
+	}
+}
+
 // NewTyped returns new EventBus with empty handlers for the specified type.
-func NewTyped[T any]() Bus[T] {
+func NewTyped[T any](opts ...Option[T]) Bus[T] {
 	b := &EventBus[T]{
 		handlers:    make(map[string][]*eventHandler[T]),
 		middlewares: make([]EventMiddleware[any], 0),
-		metrics:     &EventMetrics{},
+		metrics:     &DefaultMetrics{},
 		logger:      NewDefaultLogger(),
 		lock:        sync.RWMutex{},
 		wg:          sync.WaitGroup{},
 		closed:      false,
 		closeCh:     make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(b)
+	}
 	return Bus[T](b)
 }
 
 // New returns new EventBus with empty handlers (for compatibility, uses any type).
-func New() Bus[any] {
-	return NewTyped[any]()
+func New(opts ...Option[any]) Bus[any] {
+	return NewTyped[any](opts...)
 }
 
 // doSubscribe handles the subscription logic and is utilized by the public Subscribe functions
@@ -446,7 +480,7 @@ func (bus *EventBus[T]) WaitAsync() {
 }
 
 // GetMetrics returns the current metrics
-func (bus *EventBus[T]) GetMetrics() *EventMetrics {
+func (bus *EventBus[T]) GetMetrics() Metrics {
 	return bus.metrics
 }
 
