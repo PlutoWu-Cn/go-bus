@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/plutowu/go-bus"
+	"github.com/PlutoWu-Cn/go-bus"
 )
 
 // Event represents a basic event structure
@@ -106,7 +106,7 @@ func asyncExample() {
 	// Async handler
 	eventBus.SubscribeAsync("user.action", func(action UserAction) {
 		time.Sleep(100 * time.Millisecond) // Simulate slow processing
-		fmt.Printf("Async handler: User %s performed %s (processed after delay)\n", 
+		fmt.Printf("Async handler: User %s performed %s (processed after delay)\n",
 			action.UserID, action.Action)
 	}, false)
 
@@ -149,7 +149,7 @@ func contextExample() {
 
 	// Publish event - should be ignored due to cancellation
 	eventBus.Publish("system.message", Event{
-		ID:      "msg-002", 
+		ID:      "msg-002",
 		Message: "Second message (should be ignored)",
 		Time:    time.Now(),
 	})
@@ -210,4 +210,4 @@ func onceExample() {
 	time.Sleep(50 * time.Millisecond)
 
 	fmt.Println()
-} 
+}
