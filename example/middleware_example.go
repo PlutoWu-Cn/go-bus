@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/plutowu/go-bus"
+	"github.com/PlutoWu-Cn/go-bus"
 )
 
 // Event represents a generic event
@@ -34,9 +34,9 @@ func main() {
 	eventBus.AddMiddleware(func(topic string, event interface{}, next func()) error {
 		start := time.Now()
 		log.Printf("[TIMER] Start processing topic: %s", topic)
-		
+
 		next()
-		
+
 		duration := time.Since(start)
 		log.Printf("[TIMER] Topic %s processed in %v", topic, duration)
 		return nil
@@ -49,7 +49,7 @@ func main() {
 			log.Printf("[RATE_LIMIT] Rate limit applied to topic: %s", topic)
 			time.Sleep(100 * time.Millisecond)
 		}
-		
+
 		next()
 		return nil
 	})
@@ -87,4 +87,4 @@ func main() {
 
 	eventBus.WaitAsync()
 	fmt.Println("All events processed")
-} 
+}

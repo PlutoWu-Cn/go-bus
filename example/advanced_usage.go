@@ -8,8 +8,8 @@ import (
 	"log"
 	"strings"
 	"time"
-	
-	"github.com/plutowu/go-bus"
+
+	"github.com/PlutoWu-Cn/go-bus"
 )
 
 // UserEvent represents a user action event
@@ -169,7 +169,7 @@ func filterExample(eventBus bus.Bus[UserEvent]) {
 func contextExample(eventBus bus.Bus[UserEvent]) {
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Subscribe with context
 	handle := eventBus.SubscribeWithContext(ctx, "user.session", func(event UserEvent) {
 		fmt.Printf("Session event: %s - %s\n", event.UserID, event.Action)
@@ -178,22 +178,22 @@ func contextExample(eventBus bus.Bus[UserEvent]) {
 
 	// Publish an event - should be processed
 	eventBus.Publish("user.session", UserEvent{
-		UserID: "user789",
-		Action: "session_start",
+		UserID:    "user789",
+		Action:    "session_start",
 		Timestamp: time.Now(),
 	})
 
 	// Cancel context
 	cancel()
-	
+
 	// Brief wait to ensure cancellation takes effect
 	time.Sleep(10 * time.Millisecond)
 
 	// Publish another event - should be skipped
 	fmt.Println("Publishing event after context cancellation...")
 	eventBus.Publish("user.session", UserEvent{
-		UserID: "user789",
-		Action: "session_end",
+		UserID:    "user789",
+		Action:    "session_end",
 		Timestamp: time.Now(),
 	})
 }
@@ -203,7 +203,7 @@ func metricsExample(eventBus bus.Bus[UserEvent]) {
 	handle1 := eventBus.SubscribeWithHandle("metrics.test", func(event UserEvent) {
 		fmt.Printf("Handler 1 processing: %s\n", event.UserID)
 	})
-	
+
 	handle2 := eventBus.SubscribeWithHandle("metrics.test", func(event UserEvent) {
 		fmt.Printf("Handler 2 processing: %s\n", event.UserID)
 	})
@@ -216,8 +216,8 @@ func metricsExample(eventBus bus.Bus[UserEvent]) {
 	// Publish several events
 	for i := 0; i < 3; i++ {
 		eventBus.Publish("metrics.test", UserEvent{
-			UserID: fmt.Sprintf("user%d", i),
-			Action: "test",
+			UserID:    fmt.Sprintf("user%d", i),
+			Action:    "test",
 			Timestamp: time.Now(),
 		})
 	}
@@ -228,7 +228,7 @@ func metricsExample(eventBus bus.Bus[UserEvent]) {
 	// Get metrics
 	metrics := eventBus.GetMetrics()
 	published, processed, failed, subscribers := metrics.GetStats()
-	
+
 	fmt.Printf("📈 Metrics:\n")
 	fmt.Printf("  - Published events: %d\n", published)
 	fmt.Printf("  - Processed events: %d\n", processed)
@@ -250,16 +250,16 @@ func errorHandlingExample(eventBus bus.Bus[UserEvent]) {
 
 	// Publish normal event
 	eventBus.Publish("user.error", UserEvent{
-		UserID: "user_normal",
-		Action: "normal",
+		UserID:    "user_normal",
+		Action:    "normal",
 		Timestamp: time.Now(),
 	})
 
 	// Publish event that will cause panic
 	fmt.Println("Publishing event that will cause panic...")
 	eventBus.Publish("user.error", UserEvent{
-		UserID: "user_panic",
-		Action: "panic",
+		UserID:    "user_panic",
+		Action:    "panic",
 		Timestamp: time.Now(),
 	})
 
@@ -281,12 +281,12 @@ func timeoutExample(eventBus bus.Bus[UserEvent]) {
 
 	// Use timeout publishing
 	err := eventBus.PublishWithTimeout("user.slow", UserEvent{
-		UserID: "user_timeout",
-		Action: "slow_operation",
+		UserID:    "user_timeout",
+		Action:    "slow_operation",
 		Timestamp: time.Now(),
 	}, 1*time.Second)
 
 	if err != nil {
 		fmt.Printf("Publish timeout: %v\n", err)
 	}
-} 
+}

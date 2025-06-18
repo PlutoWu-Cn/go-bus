@@ -1,11 +1,11 @@
 # Go EventBus - High-Performance Event-Driven Architecture Library
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.19-blue.svg)](https://golang.org/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/plutowu/go-bus.svg)](https://pkg.go.dev/github.com/plutowu/go-bus)
+[![Go Reference](https://pkg.go.dev/badge/github.com/PlutoWu-Cn/go-bus.svg)](https://pkg.go.dev/github.com/PlutoWu-Cn/go-bus)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/plutowu/go-bus)](https://goreportcard.com/report/github.com/plutowu/go-bus)
-[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/plutowu/go-bus)
+[![Go Report Card](https://goreportcard.com/badge/github.com/PlutoWu-Cn/go-bus)](https://goreportcard.com/report/github.com/PlutoWu-Cn/go-bus)
+[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
 
 ![Background](assets/background.jpg)
 
@@ -38,7 +38,7 @@ A modern, high-performance Go event bus implementation with type safety, async p
 ## 📦 Installation
 
 ```bash
-go get github.com/plutowu/go-bus
+go get github.com/PlutoWu-Cn/go-bus
 ```
 
 ## 🚀 Quick Start
@@ -50,7 +50,7 @@ package main
 
 import (
     "fmt"
-    "github.com/plutowu/go-bus"
+    "github.com/PlutoWu-Cn/go-bus"
 )
 
 type UserEvent struct {

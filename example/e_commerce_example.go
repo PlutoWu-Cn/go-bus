@@ -7,15 +7,15 @@ import (
 	"log"
 	"time"
 
-	"github.com/plutowu/go-bus"
+	"github.com/PlutoWu-Cn/go-bus"
 )
 
 // Order represents an e-commerce order
 type Order struct {
-	ID       string  `json:"id"`
-	UserID   string  `json:"user_id"`
-	Amount   float64 `json:"amount"`
-	Status   string  `json:"status"`
+	ID       string   `json:"id"`
+	UserID   string   `json:"user_id"`
+	Amount   float64  `json:"amount"`
+	Status   string   `json:"status"`
 	Products []string `json:"products"`
 }
 
@@ -82,9 +82,9 @@ func main() {
 func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], inventoryBus bus.Bus[Inventory]) {
 	// Order Service - handles order lifecycle
 	orderCreatedHandle := orderBus.SubscribeWithPriority("order.created", func(order Order) {
-		fmt.Printf("📦 [ORDER-SERVICE] Order created: %s for user %s (%.2f)\n", 
+		fmt.Printf("📦 [ORDER-SERVICE] Order created: %s for user %s (%.2f)\n",
 			order.ID, order.UserID, order.Amount)
-		
+
 		// Reserve inventory for products
 		for _, productID := range order.Products {
 			inventoryBus.Publish("inventory.reserve", Inventory{
@@ -105,28 +105,28 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 
 	// Inventory Service - manages stock
 	inventoryReserveHandle := inventoryBus.SubscribeWithHandle("inventory.reserve", func(inv Inventory) {
-		fmt.Printf("📦 [INVENTORY-SERVICE] Reserving %d units of product %s\n", 
+		fmt.Printf("📦 [INVENTORY-SERVICE] Reserving %d units of product %s\n",
 			inv.Quantity, inv.ProductID)
-		
+
 		// Simulate inventory check and reservation
 		time.Sleep(50 * time.Millisecond)
-		fmt.Printf("✅ [INVENTORY-SERVICE] Reserved %d units of product %s\n", 
+		fmt.Printf("✅ [INVENTORY-SERVICE] Reserved %d units of product %s\n",
 			inv.Quantity, inv.ProductID)
 	})
 
 	inventoryReleaseHandle := inventoryBus.SubscribeWithHandle("inventory.release", func(inv Inventory) {
-		fmt.Printf("🔄 [INVENTORY-SERVICE] Releasing %d units of product %s\n", 
+		fmt.Printf("🔄 [INVENTORY-SERVICE] Releasing %d units of product %s\n",
 			inv.Quantity, inv.ProductID)
 	})
 
 	// Payment Service - processes payments
 	paymentProcessHandle := paymentBus.SubscribeWithHandle("payment.process", func(payment Payment) {
-		fmt.Printf("💳 [PAYMENT-SERVICE] Processing payment for order %s (%.2f)\n", 
+		fmt.Printf("💳 [PAYMENT-SERVICE] Processing payment for order %s (%.2f)\n",
 			payment.OrderID, payment.Amount)
-		
+
 		// Simulate payment processing
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Simulate payment success/failure
 		if payment.Amount > 1000 {
 			// Payment failed
@@ -150,7 +150,7 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 	// Payment Success Handler
 	paymentSuccessHandle := paymentBus.SubscribeWithHandle("payment.succeeded", func(payment Payment) {
 		fmt.Printf("✅ [PAYMENT-SERVICE] Payment succeeded for order %s\n", payment.OrderID)
-		
+
 		// Update order status to confirmed
 		orderBus.Publish("order.confirmed", Order{
 			ID:     payment.OrderID,
@@ -161,7 +161,7 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 	// Payment Failure Handler
 	paymentFailureHandle := paymentBus.SubscribeWithHandle("payment.failed", func(payment Payment) {
 		fmt.Printf("❌ [PAYMENT-SERVICE] Payment failed for order %s\n", payment.OrderID)
-		
+
 		// Cancel order and release inventory
 		orderBus.Publish("order.cancelled", Order{
 			ID:     payment.OrderID,
@@ -172,7 +172,7 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 	// Order Confirmed Handler
 	orderConfirmedHandle := orderBus.SubscribeWithHandle("order.confirmed", func(order Order) {
 		fmt.Printf("🎉 [ORDER-SERVICE] Order confirmed: %s\n", order.ID)
-		
+
 		// Trigger shipping process
 		fmt.Printf("📮 [SHIPPING-SERVICE] Shipping initiated for order %s\n", order.ID)
 	})
@@ -180,7 +180,7 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 	// Order Cancelled Handler
 	orderCancelledHandle := orderBus.SubscribeWithHandle("order.cancelled", func(order Order) {
 		fmt.Printf("❌ [ORDER-SERVICE] Order cancelled: %s\n", order.ID)
-		
+
 		// Release reserved inventory (simulation)
 		inventoryBus.Publish("inventory.release", Inventory{
 			ProductID: "product-1", // Simplified for demo
@@ -232,4 +232,4 @@ func processOrderWorkflow(orderBus bus.Bus[Order], paymentBus bus.Bus[Payment], 
 		Status:   "pending",
 		Products: []string{"product-3"},
 	})
-} 
+}
