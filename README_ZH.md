@@ -1,4 +1,11 @@
-# Go EventBus - 高性能事件驱动架构库
+<p align="center">
+  <img src="assets/icon.png" alt="Go-Bus Icon" width="120">
+</p>
+<h1 align="center">Go EventBus</h1>
+<p align="center">
+  <strong>一个高性能、支持泛型的 Go 事件驱动架构库</strong>
+</p>
+
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.19-blue.svg)](https://golang.org/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/PlutoWu-Cn/go-bus.svg)](https://pkg.go.dev/github.com/PlutoWu-Cn/go-bus)
@@ -6,7 +13,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/PlutoWu-Cn/go-bus)](https://goreportcard.com/report/github.com/PlutoWu-Cn/go-bus)
 [![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
 
-![Background](assets/background.jpg)
+
 
 一个现代化的、高性能的 Go 事件总线实现，支持泛型、异步处理、优先级、过滤器等企业级功能。
 

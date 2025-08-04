@@ -1,13 +1,15 @@
-# Go EventBus - High-Performance Event-Driven Architecture Library
+<p align="center">
+  <img src="assets/icon.png" alt="Go-Bus Icon" width="120">
+</p>
+<h1 align="center">Go-Bus</h1>
+<p align="center">
+  <strong>A High-Performance Event-Driven Architecture Library for Go</strong>
+</p>
 
-[![Go Version](https://img.shields.io/badge/go-%3E%3D1.19-blue.svg)](https://golang.org/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/PlutoWu-Cn/go-bus.svg)](https://pkg.go.dev/github.com/PlutoWu-Cn/go-bus)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/PlutoWu-Cn/go-bus)](https://goreportcard.com/report/github.com/PlutoWu-Cn/go-bus)
-[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.19-blue.svg)](https://golang.org/) [![Go Reference](https://pkg.go.dev/badge/github.com/PlutoWu-Cn/go-bus.svg)](https://pkg.go.dev/github.com/PlutoWu-Cn/go-bus) [![License](https.img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Go Report Card](https://goreportcard.com/badge/github.com/PlutoWu-Cn/go-bus)](https://goreportcard.com/report/github.com/PlutoWu-Cn/go-bus) [![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
 
-![Background](assets/background.jpg)
+
 
 A modern, high-performance Go event bus implementation with type safety, async processing, priority handling, filters, and enterprise-grade features.
 
