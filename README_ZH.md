@@ -1,7 +1,7 @@
 <p align="center">
   <img src="assets/icon.png" alt="Go-Bus Icon" width="120">
 </p>
-<h1 align="center">Go EventBus</h1>
+<h1 align="center">Go-Bus</h1>
 <p align="center">
   <strong>一个高性能、支持泛型的 Go 事件驱动架构库</strong>
 </p>
