@@ -419,6 +419,93 @@ func TestBusClose(t *testing.T) {
 	}
 }
 
+func TestBusCloseDoesNotDeadlockWhenAsyncHandlerUsesBus(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	if err := bus.SubscribeAsync("close.deadlock", func(event TestEvent) {
+		close(started)
+		<-release
+		_ = bus.GetSubscriberCount("close.deadlock")
+	}, false); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	bus.Publish("close.deadlock", TestEvent{ID: "close", Value: 1})
+	<-started
+
+	done := make(chan error, 1)
+	go func() {
+		done <- bus.Close()
+	}()
+
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Unexpected close error: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Close deadlocked while waiting for async handler")
+	}
+}
+
+func TestBusCloseClearsSubscriberMetrics(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+
+	bus.SubscribeWithHandle("close.metrics", func(event TestEvent) {})
+	bus.SubscribeWithHandle("close.metrics", func(event TestEvent) {})
+
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Unexpected close error: %v", err)
+	}
+
+	_, _, _, subscribers := bus.GetMetrics().GetStats()
+	if subscribers != 0 {
+		t.Fatalf("Expected 0 active subscribers after close, got %d", subscribers)
+	}
+}
+
+func TestPublishDoesNotStartAsyncHandlerAfterClose(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var processed int32
+
+	bus.AddMiddleware(func(topic string, event any, next func()) error {
+		close(ready)
+		<-release
+		next()
+		return nil
+	})
+	if err := bus.SubscribeAsync("close.publish", func(event TestEvent) {
+		atomic.AddInt32(&processed, 1)
+	}, false); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	published := make(chan error, 1)
+	go func() {
+		published <- bus.PublishWithContext(context.Background(), "close.publish", TestEvent{ID: "close", Value: 1})
+	}()
+
+	<-ready
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Unexpected close error: %v", err)
+	}
+	close(release)
+
+	if err := <-published; err == nil {
+		t.Fatal("Expected publish error after bus closed")
+	}
+	bus.WaitAsync()
+	if count := atomic.LoadInt32(&processed); count != 0 {
+		t.Fatalf("Expected async handler not to run after close, got %d calls", count)
+	}
+}
+
 func TestConcurrentPublishSubscribe(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
