@@ -732,6 +732,60 @@ func TestMultipleSubscribeOnceSameTopic(t *testing.T) {
 	}
 }
 
+func TestWildcardSubscription(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var calls []string
+	var mu sync.Mutex
+
+	bus.SubscribeWithPriority("*", func(event TestEvent) {
+		mu.Lock()
+		calls = append(calls, "wildcard:"+event.ID)
+		mu.Unlock()
+	}, PriorityHigh)
+	bus.SubscribeWithHandle("orders.created", func(event TestEvent) {
+		mu.Lock()
+		calls = append(calls, "topic:"+event.ID)
+		mu.Unlock()
+	})
+
+	bus.Publish("orders.created", TestEvent{ID: "a", Value: 1})
+	bus.Publish("users.created", TestEvent{ID: "b", Value: 2})
+
+	want := []string{"wildcard:a", "topic:a", "wildcard:b"}
+	if len(calls) != len(want) {
+		t.Fatalf("Expected %d calls, got %d: %v", len(want), len(calls), calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("Expected calls[%d]=%q, got %q", i, want[i], calls[i])
+		}
+	}
+}
+
+func TestWildcardSubscribeOnce(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var count int32
+	if err := bus.SubscribeOnce("*", func(event TestEvent) {
+		atomic.AddInt32(&count, 1)
+	}); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	bus.Publish("first.topic", TestEvent{ID: "first", Value: 1})
+	bus.Publish("second.topic", TestEvent{ID: "second", Value: 2})
+
+	if atomic.LoadInt32(&count) != 1 {
+		t.Fatalf("Expected wildcard once handler to run once, got %d", count)
+	}
+	if bus.HasCallback("*") {
+		t.Fatal("Expected wildcard once handler to unsubscribe")
+	}
+}
+
 // TestSubscribeOnceAsync tests one-time asynchronous subscription
 func TestSubscribeOnceAsync(t *testing.T) {
 	bus := NewTyped[TestEvent]()
@@ -988,6 +1042,32 @@ func TestClosedBusOperations(t *testing.T) {
 	if handle != nil {
 		t.Error("Expected nil handle when subscribing async to closed bus")
 	}
+}
+
+func TestNilInputsAreIgnoredOrRejected(t *testing.T) {
+	bus := NewTyped[TestEvent](
+		nil,
+		WithMetrics[TestEvent](nil),
+		WithMiddleware[TestEvent](nil),
+	)
+	defer bus.Close()
+
+	if bus.GetMetrics() == nil {
+		t.Fatal("Expected default metrics when nil metrics option is used")
+	}
+
+	bus.AddMiddleware(nil)
+	if err := bus.Subscribe("nil.fn", nil); err == nil {
+		t.Fatal("Expected error for nil handler")
+	}
+	if handle := bus.SubscribeWithHandle("nil.fn", nil); handle != nil {
+		t.Fatal("Expected nil handle for nil handler")
+	}
+	if handle := bus.SubscribeWithContext(nil, "nil.ctx", func(event TestEvent) {}); handle == nil {
+		t.Fatal("Expected nil context to default to background context")
+	}
+
+	bus.Publish("nil.ctx", TestEvent{ID: "ok", Value: 1})
 }
 
 // Helper function to check if string contains substring
