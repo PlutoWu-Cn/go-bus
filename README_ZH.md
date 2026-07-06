@@ -221,6 +221,33 @@ err := eventBus.SubscribeAsync("user.audit", func(event UserEvent) {
 }, true)
 ```
 
+## ✅ 行为约定
+
+- `Publish` 会忽略返回错误；需要感知取消、超时或关闭错误时，请使用 `PublishWithContext` 或 `PublishWithTimeout`。
+- 同步 handler 默认在当前 goroutine 执行；异步 handler 会在独立 goroutine 执行，`transactional=true` 时同一 handler 串行执行。
+- handler panic 会被恢复，失败计数会增加，并通过 `ErrorHandler` 上报。
+- middleware 必须调用 `next()` 才会继续执行后续 middleware 和 handler；不调用 `next()` 可用于拦截事件。
+- `SubscribeOnce` / `SubscribeOnceAsync` 的 handler 只会成功执行一次，即使同一 topic 下有多个一次性 handler。
+- `Close` 后不再接受新发布或订阅；已启动的异步 handler 会在关闭流程中等待完成。
+
+## 🗺️ RoadMap
+
+Go-Bus 会优先保持“进程内、类型安全、轻量事件总线”的定位。后续迭代会参考 Watermill、Blinker、MediatR、Guava EventBus 等项目，但不会把核心库扩成完整的分布式消息系统。
+
+| 优先级 | 是否已完成 | 方向 | 说明 |
+| --- | --- | --- | --- |
+| P0 | 已完成 | 核心正确性 | 发布路径不再持锁执行 handler，修复 `SubscribeOnce` 移除语义和 middleware 执行链，并补充 race test |
+| P0 | 已完成 | API 契约 | 明确 `Publish` / `PublishWithContext` 的错误返回、panic 恢复、同步/异步执行、关闭等边界行为 |
+| P1 | 未完成 | 文档对齐 | 让 README、示例和真实代码能力保持一致，避免承诺超过当前实现 |
+| P1 | 未完成 | 可观测性 | 增加按 topic / handler 维度的发布数、处理数、失败数、耗时统计，并提供可选 Prometheus 适配 |
+| P1 | 未完成 | 执行控制 | 支持 handler 级 timeout、recover 策略、串行/并发、最大并发数等运行时控制 |
+| P2 | 未完成 | 返回值收集 | 参考 Blinker，提供 `PublishCollect` 一类 API，收集多个 handler 的返回值或错误 |
+| P2 | 未完成 | Topic 增强 | 支持通配符 topic、层级 topic、无订阅者事件 hook，提升路由和调试能力 |
+| P2 | 未完成 | 集成示例 | 补充 `net/http`、Gin、CLI、worker 等实际项目中的使用方式 |
+| P3 | 未完成 | Broker 桥接 | 参考 Watermill，探索 NATS / Kafka / RabbitMQ 适配器；优先放在独立子包，避免拖重核心库 |
+| P3 | 未完成 | Mediator 模式 | 参考 MediatR，按需提供 request / response、command、query、notification 子包 |
+| P4 | 未完成 | 状态型能力 | 评估 sticky event、事件回放、本地持久化等能力；仅在有明确场景时加入 |
+
 ## 🏗️ 架构设计
 
 该库采用模块化设计，提高了代码的可维护性：

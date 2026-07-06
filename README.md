@@ -221,6 +221,33 @@ err := eventBus.SubscribeAsync("user.audit", func(event UserEvent) {
 }, true)
 ```
 
+## ✅ Behavior Contract
+
+- `Publish` ignores returned errors; use `PublishWithContext` or `PublishWithTimeout` when cancellation, timeout, or closed-bus errors matter.
+- Synchronous handlers run in the current goroutine by default; asynchronous handlers run in separate goroutines, and `transactional=true` serializes calls to the same handler.
+- Handler panics are recovered, failed metrics are incremented, and the error is reported through `ErrorHandler`.
+- Middleware must call `next()` to continue to the next middleware and handlers; skipping `next()` intercepts the event.
+- `SubscribeOnce` / `SubscribeOnceAsync` handlers execute successfully at most once, including when multiple one-time handlers share a topic.
+- After `Close`, the bus rejects new publish and subscribe calls; already-started async handlers are allowed to finish.
+
+## 🗺️ RoadMap
+
+Go-Bus will keep its focus on being an in-process, type-safe, lightweight event bus. Future work may borrow ideas from Watermill, Blinker, MediatR, and Guava EventBus, but the core package will not try to become a full distributed messaging system.
+
+| Priority | Status | Area | Notes |
+| --- | --- | --- | --- |
+| P0 | Done | Core correctness | Publish no longer holds the bus lock while running handlers; `SubscribeOnce` removal, middleware chaining, and race tests are covered |
+| P0 | Done | API contract | Error returns for `Publish` / `PublishWithContext`, panic recovery, sync/async execution, and closed-bus behavior are documented |
+| P1 | Planned | Documentation alignment | Keep README content, examples, and actual implementation behavior in sync |
+| P1 | Planned | Observability | Add per-topic and per-handler published, processed, failed, and duration metrics, plus an optional Prometheus adapter |
+| P1 | Planned | Execution control | Support handler-level timeout, recover policy, serial/concurrent execution, and max concurrency |
+| P2 | Planned | Result collection | Borrow from Blinker and add a `PublishCollect`-style API for collecting handler results or errors |
+| P2 | Planned | Topic enhancements | Add wildcard topics, hierarchical topics, and no-subscriber hooks for routing and debugging |
+| P2 | Planned | Integration examples | Add practical examples for `net/http`, Gin, CLI apps, and workers |
+| P3 | Planned | Broker bridges | Borrow from Watermill and explore NATS / Kafka / RabbitMQ adapters, preferably in separate subpackages |
+| P3 | Planned | Mediator mode | Borrow from MediatR and add request / response, command, query, and notification support only if needed |
+| P4 | Planned | Stateful features | Evaluate sticky events, event replay, and local persistence only when there is a clear use case |
+
 ## 🏗️ Architecture Design
 
 The library is organized into separate modules for better maintainability:

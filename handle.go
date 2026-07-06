@@ -36,7 +36,7 @@ func (h *Handle[T]) Unsubscribe() error {
 				if h.bus.logger != nil {
 					h.bus.logger.Debug("Unsubscribing handler from topic '%s'", h.topic)
 				}
-				h.bus.removeHandler(h.topic, i)
+				h.bus.removeHandlerAt(h.topic, i)
 				h.handler = nil
 				// Note: removeHandler already calls DecrementSubscribers, so we don't call it again
 				return nil

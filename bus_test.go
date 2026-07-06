@@ -296,6 +296,47 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
+func TestMiddlewareCanSkipHandlers(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var handlerCalled int32
+	bus.AddMiddleware(func(topic string, event interface{}, next func()) error {
+		return nil
+	})
+	bus.SubscribeWithHandle("middleware.skip", func(event TestEvent) {
+		atomic.AddInt32(&handlerCalled, 1)
+	})
+
+	bus.Publish("middleware.skip", TestEvent{ID: "skip", Value: 1})
+
+	if count := atomic.LoadInt32(&handlerCalled); count != 0 {
+		t.Errorf("Expected middleware to skip handler, got %d calls", count)
+	}
+}
+
+func TestPublishDoesNotHoldBusLockDuringHandler(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	done := make(chan struct{})
+	bus.SubscribeWithHandle("lock.test", func(event TestEvent) {
+		handle := bus.SubscribeWithHandle("lock.test.extra", func(event TestEvent) {})
+		if handle != nil {
+			handle.Unsubscribe()
+		}
+		close(done)
+	})
+
+	go bus.Publish("lock.test", TestEvent{ID: "lock", Value: 1})
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("handler could not call bus APIs while publish was running")
+	}
+}
+
 func TestPublishWithTimeout(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
@@ -597,6 +638,33 @@ func TestSubscribeOnce(t *testing.T) {
 	// Verify no callback exists for the topic anymore
 	if bus.HasCallback("once.test") {
 		t.Error("Expected no callback after SubscribeOnce execution")
+	}
+}
+
+func TestSubscribeOnceRemovesAllOnceHandlers(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var processed int32
+	if err := bus.SubscribeOnce("once.multi", func(event TestEvent) {
+		atomic.AddInt32(&processed, 1)
+	}); err != nil {
+		t.Errorf("Unexpected error in first SubscribeOnce: %v", err)
+	}
+	if err := bus.SubscribeOnce("once.multi", func(event TestEvent) {
+		atomic.AddInt32(&processed, 1)
+	}); err != nil {
+		t.Errorf("Unexpected error in second SubscribeOnce: %v", err)
+	}
+
+	bus.Publish("once.multi", TestEvent{ID: "first", Value: 1})
+	bus.Publish("once.multi", TestEvent{ID: "second", Value: 2})
+
+	if count := atomic.LoadInt32(&processed); count != 2 {
+		t.Errorf("Expected two once handlers to run once each, got %d", count)
+	}
+	if bus.HasCallback("once.multi") {
+		t.Error("Expected no callback after both once handlers executed")
 	}
 }
 
