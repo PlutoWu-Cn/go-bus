@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -13,6 +14,7 @@ import (
 type TestLogger struct {
 	buffer *bytes.Buffer
 	level  LogLevel
+	mu     sync.Mutex
 }
 
 func NewTestLogger() *TestLogger {
@@ -23,6 +25,8 @@ func NewTestLogger() *TestLogger {
 }
 
 func (l *TestLogger) Debug(msg string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.level <= LogLevelDebug {
 		formatted := fmt.Sprintf(msg, args...)
 		l.buffer.WriteString("[DEBUG] " + formatted + "\n")
@@ -30,6 +34,8 @@ func (l *TestLogger) Debug(msg string, args ...interface{}) {
 }
 
 func (l *TestLogger) Info(msg string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.level <= LogLevelInfo {
 		formatted := fmt.Sprintf(msg, args...)
 		l.buffer.WriteString("[INFO] " + formatted + "\n")
@@ -37,6 +43,8 @@ func (l *TestLogger) Info(msg string, args ...interface{}) {
 }
 
 func (l *TestLogger) Warn(msg string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.level <= LogLevelWarn {
 		formatted := fmt.Sprintf(msg, args...)
 		l.buffer.WriteString("[WARN] " + formatted + "\n")
@@ -44,6 +52,8 @@ func (l *TestLogger) Warn(msg string, args ...interface{}) {
 }
 
 func (l *TestLogger) Error(msg string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.level <= LogLevelError {
 		formatted := fmt.Sprintf(msg, args...)
 		l.buffer.WriteString("[ERROR] " + formatted + "\n")
@@ -51,18 +61,26 @@ func (l *TestLogger) Error(msg string, args ...interface{}) {
 }
 
 func (l *TestLogger) SetLevel(level LogLevel) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.level = level
 }
 
 func (l *TestLogger) GetLevel() LogLevel {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.level
 }
 
 func (l *TestLogger) GetLogs() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.buffer.String()
 }
 
 func (l *TestLogger) Clear() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.buffer.Reset()
 }
 
