@@ -324,6 +324,10 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 		bus.lock.RUnlock()
 		return fmt.Errorf("event bus is closed")
 	}
+	logger := bus.logger
+	errorHandler := bus.errorHandler
+	metrics := bus.metrics
+	closeCh := bus.closeCh
 	handlers := append([]*eventHandler[T](nil), bus.handlers[topic]...)
 	if topic != "*" {
 		if wildcardHandlers := bus.handlers["*"]; len(wildcardHandlers) > 0 {
@@ -337,59 +341,55 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 	bus.lock.RUnlock()
 
 	// Log event publishing
-	if bus.logger != nil {
-		bus.logger.Debug("Publishing event to topic '%s'", topic)
+	if logger != nil {
+		logger.Debug("Publishing event to topic '%s'", topic)
 	}
 
-	bus.metrics.IncrementPublished()
+	metrics.IncrementPublished()
 
-	runHandlers := func() error {
-		return bus.publishHandlers(ctx, topic, event, handlers)
+	dispatch := func() error {
+		return bus.dispatch(ctx, topic, event, handlers, closeCh, logger, errorHandler, metrics)
 	}
-	var publishErr error
-	var middlewareErr error
-	next := func() {
-		publishErr = runHandlers()
-	}
-
-	for i := len(middlewares) - 1; i >= 0; i-- {
-		middleware := middlewares[i]
-		prev := next
-		next = func() {
-			if publishErr == nil {
-				if err := middleware(topic, event, prev); err != nil {
-					middlewareErr = err
-					publishErr = err
-				}
-			}
-		}
-	}
-	next()
-
-	if publishErr != nil {
-		if middlewareErr != nil && bus.errorHandler != nil {
-			bus.errorHandler(&EventError{
+	dispatchErr, middlewareErr := runMiddlewares(middlewares, topic, event, dispatch)
+	if middlewareErr != nil {
+		if errorHandler != nil {
+			errorHandler(&EventError{
 				Topic: topic,
 				Event: event,
 				Err:   middlewareErr,
 			})
 		}
-		return publishErr
+		return middlewareErr
 	}
-
-	return nil
+	return dispatchErr
 }
 
-func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event T, handlers []*eventHandler[T]) error {
+func runMiddlewares(middlewares []EventMiddleware[any], topic string, event any, dispatch func() error) (dispatchErr, middlewareErr error) {
+	var run func(int)
+	run = func(i int) {
+		if middlewareErr != nil {
+			return
+		}
+		if i == len(middlewares) {
+			dispatchErr = dispatch()
+			return
+		}
+		if err := middlewares[i](topic, event, func() { run(i + 1) }); err != nil {
+			middlewareErr = err
+		}
+	}
+	run(0)
+	return dispatchErr, middlewareErr
+}
+
+func (bus *EventBus[T]) dispatch(ctx context.Context, topic string, event T, handlers []*eventHandler[T], closeCh <-chan struct{}, logger Logger, errorHandler ErrorHandler, metrics Metrics) error {
 	_, hasDeadline := ctx.Deadline()
 
 	for _, handler := range handlers {
-		handler := handler
-
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-bus.closeCh:
+		case <-closeCh:
 			return fmt.Errorf("event bus is closed")
 		default:
 		}
@@ -406,65 +406,69 @@ func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event
 			continue
 		}
 
-		if handler.flagOnce {
-			bus.removeHandler(handler.topic, handler)
+		if handler.flagOnce && !bus.removeHandler(handler.topic, handler) {
+			continue
 		}
 
 		if !handler.async {
-			if !hasDeadline {
-				bus.doPublish(handler, topic, event)
-				continue
-			}
-
-			done := make(chan error, 1)
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						if bus.errorHandler != nil {
-							bus.errorHandler(&EventError{
-								Topic:   topic,
-								Event:   event,
-								Handler: handler.callBack,
-								Err:     fmt.Errorf("panic: %v", r),
-							})
+			if hasDeadline {
+				done := make(chan error, 1)
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							if errorHandler != nil {
+								errorHandler(&EventError{
+									Topic:   topic,
+									Event:   event,
+									Handler: handler.callBack,
+									Err:     fmt.Errorf("panic: %v", r),
+								})
+							}
+							metrics.IncrementFailed()
+							done <- fmt.Errorf("panic: %v", r)
+						} else {
+							metrics.IncrementProcessed()
+							done <- nil
 						}
-						bus.metrics.IncrementFailed()
-						done <- fmt.Errorf("panic: %v", r)
-						return
-					}
-					bus.metrics.IncrementProcessed()
-					done <- nil
+					}()
+					handler.callBack(event)
 				}()
-				handler.callBack(event)
-			}()
 
-			select {
-			case err := <-done:
-				if err != nil {
-					return err
+				select {
+				case err := <-done:
+					if err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-closeCh:
+					return fmt.Errorf("event bus is closed")
 				}
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-bus.closeCh:
-				return fmt.Errorf("event bus is closed")
+			} else {
+				bus.doPublish(handler, topic, event, logger, errorHandler, metrics)
 			}
 			continue
 		}
 
-		bus.lock.RLock()
-		if bus.closed {
-			bus.lock.RUnlock()
+		if !bus.addAsync() {
 			return fmt.Errorf("event bus is closed")
 		}
-		bus.wg.Add(1)
-		bus.lock.RUnlock()
-
 		if handler.transactional {
 			handler.Lock()
 		}
-		go bus.doPublishAsync(handler, topic, event)
+		go bus.doPublishAsync(handler, topic, event, logger, errorHandler, metrics)
 	}
 	return nil
+}
+
+func (bus *EventBus[T]) addAsync() bool {
+	bus.lock.RLock()
+	defer bus.lock.RUnlock()
+	if bus.closed {
+		return false
+	}
+	bus.wg.Add(1)
+	return true
 }
 
 // PublishWithTimeout publishes an event with timeout
@@ -474,33 +478,33 @@ func (bus *EventBus[T]) PublishWithTimeout(topic string, event T, timeout time.D
 	return bus.PublishWithContext(ctx, topic, event)
 }
 
-func (bus *EventBus[T]) doPublish(handler *eventHandler[T], topic string, event T) {
+func (bus *EventBus[T]) doPublish(handler *eventHandler[T], topic string, event T, logger Logger, errorHandler ErrorHandler, metrics Metrics) {
 	defer func() {
 		if r := recover(); r != nil {
-			if bus.logger != nil {
-				bus.logger.Error("Handler panic for topic '%s': %v", topic, r)
+			if logger != nil {
+				logger.Error("Handler panic for topic '%s': %v", topic, r)
 			}
-			if bus.errorHandler != nil {
-				bus.errorHandler(&EventError{
+			if errorHandler != nil {
+				errorHandler(&EventError{
 					Topic:   topic,
 					Event:   event,
 					Handler: handler.callBack,
 					Err:     fmt.Errorf("panic: %v", r),
 				})
 			}
-			bus.metrics.IncrementFailed()
+			metrics.IncrementFailed()
 			return
 		}
-		if bus.logger != nil {
-			bus.logger.Debug("Handler executed successfully for topic '%s'", topic)
+		if logger != nil {
+			logger.Debug("Handler executed successfully for topic '%s'", topic)
 		}
-		bus.metrics.IncrementProcessed()
+		metrics.IncrementProcessed()
 	}()
 
 	handler.callBack(event)
 }
 
-func (bus *EventBus[T]) doPublishAsync(handler *eventHandler[T], topic string, event T) {
+func (bus *EventBus[T]) doPublishAsync(handler *eventHandler[T], topic string, event T, logger Logger, errorHandler ErrorHandler, metrics Metrics) {
 	defer bus.wg.Done()
 	defer func() {
 		if handler.transactional {
@@ -508,7 +512,7 @@ func (bus *EventBus[T]) doPublishAsync(handler *eventHandler[T], topic string, e
 		}
 	}()
 
-	bus.doPublish(handler, topic, event)
+	bus.doPublish(handler, topic, event, logger, errorHandler, metrics)
 }
 
 func (bus *EventBus[T]) removeHandler(topic string, target *eventHandler[T]) bool {
@@ -617,19 +621,15 @@ func (bus *EventBus[T]) Close() error {
 
 	bus.closed = true
 	close(bus.closeCh)
-	bus.lock.Unlock()
-
-	// Wait for all async operations to complete
-	bus.wg.Wait()
-
-	// Clear all handlers
-	bus.lock.Lock()
 	subscriberCount := 0
 	for _, handlers := range bus.handlers {
 		subscriberCount += len(handlers)
 	}
 	bus.handlers = make(map[string][]*eventHandler[T])
 	bus.lock.Unlock()
+
+	// Wait for all async operations to complete
+	bus.wg.Wait()
 
 	for i := 0; i < subscriberCount; i++ {
 		bus.metrics.DecrementSubscribers()

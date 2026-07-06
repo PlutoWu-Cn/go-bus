@@ -316,6 +316,28 @@ func TestMiddlewareCanSkipHandlers(t *testing.T) {
 	}
 }
 
+func TestPublishDoesNotHoldBusLockDuringHandler(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	done := make(chan struct{})
+	bus.SubscribeWithHandle("lock.test", func(event TestEvent) {
+		handle := bus.SubscribeWithHandle("lock.test.extra", func(event TestEvent) {})
+		if handle != nil {
+			handle.Unsubscribe()
+		}
+		close(done)
+	})
+
+	go bus.Publish("lock.test", TestEvent{ID: "lock", Value: 1})
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("handler could not call bus APIs while publish was running")
+	}
+}
+
 func TestPublishWithTimeout(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
