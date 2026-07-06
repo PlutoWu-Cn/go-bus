@@ -3,6 +3,7 @@ package bus
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // CustomMetrics is a custom implementation of the Metrics interface
@@ -137,5 +138,40 @@ func TestWithOptions(t *testing.T) {
 	metricsFromBus := bus.GetMetrics()
 	if metricsFromBus != customMetrics {
 		t.Errorf("Expected metrics from bus to be our custom metrics instance")
+	}
+}
+
+func TestDefaultMetricsDetailedSnapshots(t *testing.T) {
+	metrics := &DefaultMetrics{}
+
+	metrics.IncrementPublished()
+	metrics.RecordPublished("orders.created")
+	metrics.IncrementProcessed()
+	metrics.RecordProcessed("orders.created", "orders.created#1", 10*time.Millisecond)
+	metrics.IncrementFailed()
+	metrics.RecordFailed("orders.created", "orders.created#1", 5*time.Millisecond)
+
+	topics := metrics.GetTopicStats()
+	topicStats := topics["orders.created"]
+	if topicStats.PublishedEvents != 1 {
+		t.Fatalf("Expected 1 topic publish, got %d", topicStats.PublishedEvents)
+	}
+	if topicStats.ProcessedEvents != 1 {
+		t.Fatalf("Expected 1 topic processed event, got %d", topicStats.ProcessedEvents)
+	}
+	if topicStats.FailedEvents != 1 {
+		t.Fatalf("Expected 1 topic failed event, got %d", topicStats.FailedEvents)
+	}
+	if topicStats.TotalDuration != 15*time.Millisecond {
+		t.Fatalf("Expected 15ms topic duration, got %v", topicStats.TotalDuration)
+	}
+
+	handlers := metrics.GetHandlerStats()
+	handlerStats := handlers["orders.created#1"]
+	if handlerStats.Topic != "orders.created" {
+		t.Fatalf("Expected handler topic orders.created, got %s", handlerStats.Topic)
+	}
+	if handlerStats.ProcessedEvents != 1 || handlerStats.FailedEvents != 1 {
+		t.Fatalf("Expected handler processed=1 failed=1, got processed=%d failed=%d", handlerStats.ProcessedEvents, handlerStats.FailedEvents)
 	}
 }
