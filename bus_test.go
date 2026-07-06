@@ -296,6 +296,26 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
+func TestMiddlewareCanSkipHandlers(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var handlerCalled int32
+
+	bus.AddMiddleware(func(topic string, event interface{}, next func()) error {
+		return nil
+	})
+	bus.SubscribeWithHandle("middleware.skip.test", func(event TestEvent) {
+		atomic.AddInt32(&handlerCalled, 1)
+	})
+
+	bus.Publish("middleware.skip.test", TestEvent{ID: "test", Value: 1})
+
+	if count := atomic.LoadInt32(&handlerCalled); count != 0 {
+		t.Errorf("Expected middleware to skip handler, got %d calls", count)
+	}
+}
+
 func TestPublishWithTimeout(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
@@ -600,6 +620,31 @@ func TestSubscribeOnce(t *testing.T) {
 	}
 }
 
+func TestMultipleSubscribeOnceSameTopic(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var first int32
+	var second int32
+
+	bus.SubscribeOnce("once.multi.test", func(event TestEvent) {
+		atomic.AddInt32(&first, 1)
+	})
+	bus.SubscribeOnce("once.multi.test", func(event TestEvent) {
+		atomic.AddInt32(&second, 1)
+	})
+
+	bus.Publish("once.multi.test", TestEvent{ID: "once", Value: 1})
+	bus.Publish("once.multi.test", TestEvent{ID: "again", Value: 2})
+
+	if atomic.LoadInt32(&first) != 1 || atomic.LoadInt32(&second) != 1 {
+		t.Fatalf("Expected both once handlers to run once, got first=%d second=%d", first, second)
+	}
+	if bus.HasCallback("once.multi.test") {
+		t.Error("Expected no callback after once handlers run")
+	}
+}
+
 // TestSubscribeOnceAsync tests one-time asynchronous subscription
 func TestSubscribeOnceAsync(t *testing.T) {
 	bus := NewTyped[TestEvent]()
@@ -708,9 +753,13 @@ func TestGetTopics(t *testing.T) {
 		}
 	}
 
-	// Note: The current implementation doesn't remove empty topic entries from the map
-	// when all handlers are unsubscribed, so topics remain in GetTopics() result
-	// This is the actual behavior of the current implementation
+	handle1.Unsubscribe()
+	handle2.Unsubscribe()
+	handle3.Unsubscribe()
+
+	if topics := bus.GetTopics(); len(topics) != 0 {
+		t.Errorf("Expected no topics after all handlers unsubscribe, got %v", topics)
+	}
 }
 
 // TestGetSubscriberCount tests the GetSubscriberCount function
