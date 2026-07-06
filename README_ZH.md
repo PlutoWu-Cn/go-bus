@@ -11,7 +11,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/PlutoWu-Cn/go-bus.svg)](https://pkg.go.dev/github.com/PlutoWu-Cn/go-bus)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/PlutoWu-Cn/go-bus)](https://goreportcard.com/report/github.com/PlutoWu-Cn/go-bus)
-[![Coverage](https://img.shields.io/badge/coverage-92.2%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
+[![Coverage](https://img.shields.io/badge/coverage-92.3%25-brightgreen.svg)](https://github.com/PlutoWu-Cn/go-bus)
 
 
 
@@ -281,7 +281,7 @@ type BusPublisher[T any] interface {
 
 // 控制器接口
 type BusController interface {
-    GetMetrics() *EventMetrics
+    GetMetrics() Metrics
     SetErrorHandler(handler ErrorHandler)
     AddMiddleware(middleware EventMiddleware[any])
     Close() error
@@ -425,7 +425,7 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
 ```
 
-**当前测试覆盖率：92.2%** - 我们保持高测试覆盖率以确保可靠性和稳定性。
+**当前测试覆盖率：92.3%** - 我们保持高测试覆盖率以确保可靠性和稳定性。
 
 运行性能测试：
 

@@ -301,14 +301,15 @@ func TestMiddlewareCanSkipHandlers(t *testing.T) {
 	defer bus.Close()
 
 	var handlerCalled int32
+
 	bus.AddMiddleware(func(topic string, event interface{}, next func()) error {
 		return nil
 	})
-	bus.SubscribeWithHandle("middleware.skip", func(event TestEvent) {
+	bus.SubscribeWithHandle("middleware.skip.test", func(event TestEvent) {
 		atomic.AddInt32(&handlerCalled, 1)
 	})
 
-	bus.Publish("middleware.skip", TestEvent{ID: "skip", Value: 1})
+	bus.Publish("middleware.skip.test", TestEvent{ID: "test", Value: 1})
 
 	if count := atomic.LoadInt32(&handlerCalled); count != 0 {
 		t.Errorf("Expected middleware to skip handler, got %d calls", count)
@@ -437,6 +438,93 @@ func TestBusClose(t *testing.T) {
 	err = bus.Close()
 	if err == nil {
 		t.Error("Expected error when closing already closed bus")
+	}
+}
+
+func TestBusCloseDoesNotDeadlockWhenAsyncHandlerUsesBus(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	if err := bus.SubscribeAsync("close.deadlock", func(event TestEvent) {
+		close(started)
+		<-release
+		_ = bus.GetSubscriberCount("close.deadlock")
+	}, false); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	bus.Publish("close.deadlock", TestEvent{ID: "close", Value: 1})
+	<-started
+
+	done := make(chan error, 1)
+	go func() {
+		done <- bus.Close()
+	}()
+
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Unexpected close error: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Close deadlocked while waiting for async handler")
+	}
+}
+
+func TestBusCloseClearsSubscriberMetrics(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+
+	bus.SubscribeWithHandle("close.metrics", func(event TestEvent) {})
+	bus.SubscribeWithHandle("close.metrics", func(event TestEvent) {})
+
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Unexpected close error: %v", err)
+	}
+
+	_, _, _, subscribers := bus.GetMetrics().GetStats()
+	if subscribers != 0 {
+		t.Fatalf("Expected 0 active subscribers after close, got %d", subscribers)
+	}
+}
+
+func TestPublishDoesNotStartAsyncHandlerAfterClose(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var processed int32
+
+	bus.AddMiddleware(func(topic string, event any, next func()) error {
+		close(ready)
+		<-release
+		next()
+		return nil
+	})
+	if err := bus.SubscribeAsync("close.publish", func(event TestEvent) {
+		atomic.AddInt32(&processed, 1)
+	}, false); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	published := make(chan error, 1)
+	go func() {
+		published <- bus.PublishWithContext(context.Background(), "close.publish", TestEvent{ID: "close", Value: 1})
+	}()
+
+	<-ready
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Unexpected close error: %v", err)
+	}
+	close(release)
+
+	if err := <-published; err == nil {
+		t.Fatal("Expected publish error after bus closed")
+	}
+	bus.WaitAsync()
+	if count := atomic.LoadInt32(&processed); count != 0 {
+		t.Fatalf("Expected async handler not to run after close, got %d calls", count)
 	}
 }
 
@@ -641,30 +729,82 @@ func TestSubscribeOnce(t *testing.T) {
 	}
 }
 
-func TestSubscribeOnceRemovesAllOnceHandlers(t *testing.T) {
+func TestMultipleSubscribeOnceSameTopic(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
 
-	var processed int32
-	if err := bus.SubscribeOnce("once.multi", func(event TestEvent) {
-		atomic.AddInt32(&processed, 1)
-	}); err != nil {
-		t.Errorf("Unexpected error in first SubscribeOnce: %v", err)
+	var first int32
+	var second int32
+
+	bus.SubscribeOnce("once.multi.test", func(event TestEvent) {
+		atomic.AddInt32(&first, 1)
+	})
+	bus.SubscribeOnce("once.multi.test", func(event TestEvent) {
+		atomic.AddInt32(&second, 1)
+	})
+
+	bus.Publish("once.multi.test", TestEvent{ID: "once", Value: 1})
+	bus.Publish("once.multi.test", TestEvent{ID: "again", Value: 2})
+
+	if atomic.LoadInt32(&first) != 1 || atomic.LoadInt32(&second) != 1 {
+		t.Fatalf("Expected both once handlers to run once, got first=%d second=%d", first, second)
 	}
-	if err := bus.SubscribeOnce("once.multi", func(event TestEvent) {
-		atomic.AddInt32(&processed, 1)
+	if bus.HasCallback("once.multi.test") {
+		t.Error("Expected no callback after once handlers run")
+	}
+}
+
+func TestWildcardSubscription(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var calls []string
+	var mu sync.Mutex
+
+	bus.SubscribeWithPriority("*", func(event TestEvent) {
+		mu.Lock()
+		calls = append(calls, "wildcard:"+event.ID)
+		mu.Unlock()
+	}, PriorityHigh)
+	bus.SubscribeWithHandle("orders.created", func(event TestEvent) {
+		mu.Lock()
+		calls = append(calls, "topic:"+event.ID)
+		mu.Unlock()
+	})
+
+	bus.Publish("orders.created", TestEvent{ID: "a", Value: 1})
+	bus.Publish("users.created", TestEvent{ID: "b", Value: 2})
+
+	want := []string{"wildcard:a", "topic:a", "wildcard:b"}
+	if len(calls) != len(want) {
+		t.Fatalf("Expected %d calls, got %d: %v", len(want), len(calls), calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("Expected calls[%d]=%q, got %q", i, want[i], calls[i])
+		}
+	}
+}
+
+func TestWildcardSubscribeOnce(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var count int32
+	if err := bus.SubscribeOnce("*", func(event TestEvent) {
+		atomic.AddInt32(&count, 1)
 	}); err != nil {
-		t.Errorf("Unexpected error in second SubscribeOnce: %v", err)
+		t.Fatalf("Unexpected subscribe error: %v", err)
 	}
 
-	bus.Publish("once.multi", TestEvent{ID: "first", Value: 1})
-	bus.Publish("once.multi", TestEvent{ID: "second", Value: 2})
+	bus.Publish("first.topic", TestEvent{ID: "first", Value: 1})
+	bus.Publish("second.topic", TestEvent{ID: "second", Value: 2})
 
-	if count := atomic.LoadInt32(&processed); count != 2 {
-		t.Errorf("Expected two once handlers to run once each, got %d", count)
+	if atomic.LoadInt32(&count) != 1 {
+		t.Fatalf("Expected wildcard once handler to run once, got %d", count)
 	}
-	if bus.HasCallback("once.multi") {
-		t.Error("Expected no callback after both once handlers executed")
+	if bus.HasCallback("*") {
+		t.Fatal("Expected wildcard once handler to unsubscribe")
 	}
 }
 
@@ -776,9 +916,13 @@ func TestGetTopics(t *testing.T) {
 		}
 	}
 
-	// Note: The current implementation doesn't remove empty topic entries from the map
-	// when all handlers are unsubscribed, so topics remain in GetTopics() result
-	// This is the actual behavior of the current implementation
+	handle1.Unsubscribe()
+	handle2.Unsubscribe()
+	handle3.Unsubscribe()
+
+	if topics := bus.GetTopics(); len(topics) != 0 {
+		t.Errorf("Expected no topics after all handlers unsubscribe, got %v", topics)
+	}
 }
 
 // TestGetSubscriberCount tests the GetSubscriberCount function
@@ -920,6 +1064,32 @@ func TestClosedBusOperations(t *testing.T) {
 	if handle != nil {
 		t.Error("Expected nil handle when subscribing async to closed bus")
 	}
+}
+
+func TestNilInputsAreIgnoredOrRejected(t *testing.T) {
+	bus := NewTyped[TestEvent](
+		nil,
+		WithMetrics[TestEvent](nil),
+		WithMiddleware[TestEvent](nil),
+	)
+	defer bus.Close()
+
+	if bus.GetMetrics() == nil {
+		t.Fatal("Expected default metrics when nil metrics option is used")
+	}
+
+	bus.AddMiddleware(nil)
+	if err := bus.Subscribe("nil.fn", nil); err == nil {
+		t.Fatal("Expected error for nil handler")
+	}
+	if handle := bus.SubscribeWithHandle("nil.fn", nil); handle != nil {
+		t.Fatal("Expected nil handle for nil handler")
+	}
+	if handle := bus.SubscribeWithContext(nil, "nil.ctx", func(event TestEvent) {}); handle == nil {
+		t.Fatal("Expected nil context to default to background context")
+	}
+
+	bus.Publish("nil.ctx", TestEvent{ID: "ok", Value: 1})
 }
 
 // Helper function to check if string contains substring

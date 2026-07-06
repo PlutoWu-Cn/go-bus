@@ -26,25 +26,15 @@ func (h *Handle[T]) Unsubscribe() error {
 		return fmt.Errorf("handle already unsubscribed")
 	}
 
-	h.bus.lock.Lock()
-	defer h.bus.lock.Unlock()
-
-	if handlers, ok := h.bus.handlers[h.topic]; ok {
-		for i, handler := range handlers {
-			if handler == h.handler {
-				// Log unsubscription
-				if h.bus.logger != nil {
-					h.bus.logger.Debug("Unsubscribing handler from topic '%s'", h.topic)
-				}
-				h.bus.removeHandlerAt(h.topic, i)
-				h.handler = nil
-				// Note: removeHandler already calls DecrementSubscribers, so we don't call it again
-				return nil
-			}
-		}
+	if h.bus.logger != nil {
+		h.bus.logger.Debug("Unsubscribing handler from topic '%s'", h.topic)
 	}
+	if !h.bus.removeHandler(h.topic, h.handler) {
+		return fmt.Errorf("handler not found for topic %s", h.topic)
+	}
+	h.handler = nil
 
-	return fmt.Errorf("handler not found for topic %s", h.topic)
+	return nil
 }
 
 // IsActive returns whether this handle is still active
@@ -56,6 +46,7 @@ func (h *Handle[T]) IsActive() bool {
 
 // eventHandler represents an internal event handler
 type eventHandler[T any] struct {
+	topic         string
 	callBack      func(T)
 	flagOnce      bool
 	async         bool
