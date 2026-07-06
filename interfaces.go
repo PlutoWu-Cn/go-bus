@@ -18,6 +18,11 @@ type BusSubscriber[T any] interface {
 	SubscribeWithContext(ctx context.Context, topic string, fn func(T)) *Handle[T]
 }
 
+// ControlledSubscriber defines optional handler-level execution control behavior.
+type ControlledSubscriber[T any] interface {
+	SubscribeWithOptions(topic string, fn func(T), options ...HandlerOption) (*Handle[T], error)
+}
+
 // BusPublisher defines publishing-related bus behavior
 type BusPublisher[T any] interface {
 	Publish(topic string, event T)

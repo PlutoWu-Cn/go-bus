@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Handle represents a subscription handle that can be used to unsubscribe
@@ -46,13 +47,18 @@ func (h *Handle[T]) IsActive() bool {
 
 // eventHandler represents an internal event handler
 type eventHandler[T any] struct {
-	topic         string
-	callBack      func(T)
-	flagOnce      bool
-	async         bool
-	transactional bool
-	priority      Priority
-	filter        EventFilter[T]
-	ctx           context.Context
-	sync.Mutex    // lock for an event handler - useful for running async callbacks serially
+	id             string
+	topic          string
+	callBack       func(T)
+	flagOnce       bool
+	async          bool
+	transactional  bool
+	priority       Priority
+	filter         EventFilter[T]
+	ctx            context.Context
+	timeout        time.Duration
+	recoverPolicy  RecoverPolicy
+	maxConcurrency int
+	concurrency    chan struct{}
+	sync.Mutex     // lock for an event handler - useful for running async callbacks serially
 }

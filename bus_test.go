@@ -316,6 +316,55 @@ func TestMiddlewareCanSkipHandlers(t *testing.T) {
 	}
 }
 
+func TestMiddlewareNextIsIdempotent(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var handlerCalled int32
+	bus.AddMiddleware(func(topic string, event interface{}, next func()) error {
+		next()
+		next()
+		return nil
+	})
+	bus.SubscribeWithHandle("middleware.next.once", func(event TestEvent) {
+		atomic.AddInt32(&handlerCalled, 1)
+	})
+
+	bus.Publish("middleware.next.once", TestEvent{ID: "test", Value: 1})
+
+	if count := atomic.LoadInt32(&handlerCalled); count != 1 {
+		t.Fatalf("Expected handler to run once, got %d", count)
+	}
+}
+
+func TestMiddlewareNextIsConcurrentSafe(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var handlerCalled int32
+	bus.AddMiddleware(func(topic string, event interface{}, next func()) error {
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				next()
+			}()
+		}
+		wg.Wait()
+		return nil
+	})
+	bus.SubscribeWithHandle("middleware.next.concurrent", func(event TestEvent) {
+		atomic.AddInt32(&handlerCalled, 1)
+	})
+
+	bus.Publish("middleware.next.concurrent", TestEvent{ID: "test", Value: 1})
+
+	if count := atomic.LoadInt32(&handlerCalled); count != 1 {
+		t.Fatalf("Expected handler to run once, got %d", count)
+	}
+}
+
 func TestPublishDoesNotHoldBusLockDuringHandler(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
@@ -360,6 +409,174 @@ func TestPublishWithTimeout(t *testing.T) {
 	// Verify it returns around timeout time
 	if elapsed > 80*time.Millisecond {
 		t.Errorf("Expected timeout around 50ms, but took %v", elapsed)
+	}
+}
+
+func TestHandlerTimeoutOption(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	_, err := bus.SubscribeWithOptions("handler.timeout", func(event TestEvent) {
+		time.Sleep(100 * time.Millisecond)
+	}, HandlerTimeout(20*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	start := time.Now()
+	err = bus.PublishWithContext(context.Background(), "handler.timeout", TestEvent{ID: "timeout", Value: 1})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("Expected handler timeout error")
+	}
+	if elapsed > 80*time.Millisecond {
+		t.Fatalf("Expected handler timeout around 20ms, took %v", elapsed)
+	}
+
+	_, _, failed, _ := bus.GetMetrics().GetStats()
+	if failed != 1 {
+		t.Fatalf("Expected 1 failed handler, got %d", failed)
+	}
+}
+
+func TestHandlerTimeoutGoroutineIsWaited(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	done := make(chan struct{})
+	_, err := bus.SubscribeWithOptions("handler.timeout.wait", func(event TestEvent) {
+		time.Sleep(60 * time.Millisecond)
+		close(done)
+	}, HandlerTimeout(10*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	if err := bus.PublishWithContext(context.Background(), "handler.timeout.wait", TestEvent{ID: "timeout", Value: 1}); err == nil {
+		t.Fatal("Expected handler timeout error")
+	}
+
+	bus.WaitAsync()
+	select {
+	case <-done:
+	default:
+		t.Fatal("Expected WaitAsync to wait for timed-out handler goroutine")
+	}
+}
+
+func TestHandlerTimeoutCancelsConcurrencyWait(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	block := make(chan struct{})
+	if _, err := bus.SubscribeWithOptions("handler.timeout.concurrency", func(event TestEvent) {
+		if event.ID == "first" {
+			<-block
+		}
+	}, HandlerTimeout(10*time.Millisecond), HandlerMaxConcurrency(1)); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- bus.PublishWithContext(context.Background(), "handler.timeout.concurrency", TestEvent{ID: "first", Value: 1})
+	}()
+	if err := <-firstDone; err == nil {
+		t.Fatal("Expected first publish to time out")
+	}
+
+	if err := bus.PublishWithContext(context.Background(), "handler.timeout.concurrency", TestEvent{ID: "second", Value: 2}); err == nil {
+		t.Fatal("Expected second publish to time out waiting for concurrency slot")
+	}
+
+	waited := make(chan struct{})
+	go func() {
+		bus.WaitAsync()
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+		t.Fatal("WaitAsync should still wait for the blocked first handler")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(block)
+	select {
+	case <-waited:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Expected WaitAsync to finish after blocked handler is released")
+	}
+}
+
+func TestPublishWithNilContextUsesBackground(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var called int32
+	bus.SubscribeWithHandle("nil.publish.context", func(event TestEvent) {
+		atomic.AddInt32(&called, 1)
+	})
+
+	if err := bus.PublishWithContext(nil, "nil.publish.context", TestEvent{ID: "nil", Value: 1}); err != nil {
+		t.Fatalf("Unexpected publish error: %v", err)
+	}
+	if atomic.LoadInt32(&called) != 1 {
+		t.Fatal("Expected handler to run with nil publish context")
+	}
+}
+
+func TestRecoverAndStopOption(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var secondCalled int32
+	_, err := bus.SubscribeWithOptions("recover.stop", func(event TestEvent) {
+		panic("stop")
+	}, HandlerRecoverPolicy(RecoverAndStop), HandlerPriority(PriorityHigh))
+	if err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+	bus.SubscribeWithPriority("recover.stop", func(event TestEvent) {
+		atomic.AddInt32(&secondCalled, 1)
+	}, PriorityLow)
+
+	err = bus.PublishWithContext(context.Background(), "recover.stop", TestEvent{ID: "panic", Value: 1})
+	if err == nil {
+		t.Fatal("Expected recovered panic to stop publish")
+	}
+	if atomic.LoadInt32(&secondCalled) != 0 {
+		t.Fatal("Expected lower priority handler to be skipped")
+	}
+}
+
+func TestHandlerMaxConcurrencyOption(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var current int32
+	var maxSeen int32
+	if _, err := bus.SubscribeWithOptions("max.concurrency", func(event TestEvent) {
+		now := atomic.AddInt32(&current, 1)
+		for {
+			seen := atomic.LoadInt32(&maxSeen)
+			if now <= seen || atomic.CompareAndSwapInt32(&maxSeen, seen, now) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&current, -1)
+	}, HandlerAsync(false), HandlerMaxConcurrency(1)); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		bus.Publish("max.concurrency", TestEvent{ID: fmt.Sprintf("%d", i), Value: i})
+	}
+	bus.WaitAsync()
+
+	if atomic.LoadInt32(&maxSeen) != 1 {
+		t.Fatalf("Expected one concurrent execution for the handler, got %d", maxSeen)
 	}
 }
 

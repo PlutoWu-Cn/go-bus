@@ -1,6 +1,9 @@
 package bus
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Metrics defines the monitoring interface for the event bus
 type Metrics interface {
@@ -12,42 +15,89 @@ type Metrics interface {
 	GetStats() (published, processed, failed int64, activeSubscribers int32)
 }
 
+// DetailedMetrics is an optional metrics extension for topic and handler level data.
+type DetailedMetrics interface {
+	Metrics
+	RecordPublished(topic string)
+	RecordProcessed(topic, handlerID string, duration time.Duration)
+	RecordFailed(topic, handlerID string, duration time.Duration)
+}
+
+// TopicMetricsSnapshot is a read-only copy of metrics for a topic.
+type TopicMetricsSnapshot struct {
+	PublishedEvents int64
+	ProcessedEvents int64
+	FailedEvents    int64
+	TotalDuration   time.Duration
+}
+
+// HandlerMetricsSnapshot is a read-only copy of metrics for a handler.
+type HandlerMetricsSnapshot struct {
+	Topic           string
+	ProcessedEvents int64
+	FailedEvents    int64
+	TotalDuration   time.Duration
+}
+
+type topicMetrics struct {
+	publishedEvents int64
+	processedEvents int64
+	failedEvents    int64
+	totalDuration   time.Duration
+}
+
+type handlerMetrics struct {
+	topic           string
+	processedEvents int64
+	failedEvents    int64
+	totalDuration   time.Duration
+}
+
 // DefaultMetrics is the default implementation of the Metrics interface
 type DefaultMetrics struct {
 	PublishedEvents   int64
 	ProcessedEvents   int64
 	FailedEvents      int64
 	ActiveSubscribers int32
+	topicMetrics      map[string]*topicMetrics
+	handlerMetrics    map[string]*handlerMetrics
 	mu                sync.RWMutex
 }
+
+var _ DetailedMetrics = (*DefaultMetrics)(nil)
 
 func (m *DefaultMetrics) IncrementPublished() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureMaps()
 	m.PublishedEvents++
 }
 
 func (m *DefaultMetrics) IncrementProcessed() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureMaps()
 	m.ProcessedEvents++
 }
 
 func (m *DefaultMetrics) IncrementFailed() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureMaps()
 	m.FailedEvents++
 }
 
 func (m *DefaultMetrics) IncrementSubscribers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureMaps()
 	m.ActiveSubscribers++
 }
 
 func (m *DefaultMetrics) DecrementSubscribers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureMaps()
 	m.ActiveSubscribers--
 }
 
@@ -55,4 +105,101 @@ func (m *DefaultMetrics) GetStats() (published, processed, failed int64, activeS
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.PublishedEvents, m.ProcessedEvents, m.FailedEvents, m.ActiveSubscribers
+}
+
+// RecordPublished records a published event for a topic.
+func (m *DefaultMetrics) RecordPublished(topic string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureMaps()
+	m.getTopicMetricsLocked(topic).publishedEvents++
+}
+
+// RecordProcessed records a successful handler execution.
+func (m *DefaultMetrics) RecordProcessed(topic, handlerID string, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureMaps()
+	topicStats := m.getTopicMetricsLocked(topic)
+	topicStats.processedEvents++
+	topicStats.totalDuration += duration
+
+	handlerStats := m.getHandlerMetricsLocked(topic, handlerID)
+	handlerStats.processedEvents++
+	handlerStats.totalDuration += duration
+}
+
+// RecordFailed records a failed handler execution.
+func (m *DefaultMetrics) RecordFailed(topic, handlerID string, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureMaps()
+	topicStats := m.getTopicMetricsLocked(topic)
+	topicStats.failedEvents++
+	topicStats.totalDuration += duration
+
+	handlerStats := m.getHandlerMetricsLocked(topic, handlerID)
+	handlerStats.failedEvents++
+	handlerStats.totalDuration += duration
+}
+
+// GetTopicStats returns a snapshot of per-topic metrics.
+func (m *DefaultMetrics) GetTopicStats() map[string]TopicMetricsSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]TopicMetricsSnapshot, len(m.topicMetrics))
+	for topic, stats := range m.topicMetrics {
+		result[topic] = TopicMetricsSnapshot{
+			PublishedEvents: stats.publishedEvents,
+			ProcessedEvents: stats.processedEvents,
+			FailedEvents:    stats.failedEvents,
+			TotalDuration:   stats.totalDuration,
+		}
+	}
+	return result
+}
+
+// GetHandlerStats returns a snapshot of per-handler metrics.
+func (m *DefaultMetrics) GetHandlerStats() map[string]HandlerMetricsSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]HandlerMetricsSnapshot, len(m.handlerMetrics))
+	for handlerID, stats := range m.handlerMetrics {
+		result[handlerID] = HandlerMetricsSnapshot{
+			Topic:           stats.topic,
+			ProcessedEvents: stats.processedEvents,
+			FailedEvents:    stats.failedEvents,
+			TotalDuration:   stats.totalDuration,
+		}
+	}
+	return result
+}
+
+func (m *DefaultMetrics) ensureMaps() {
+	if m.topicMetrics == nil {
+		m.topicMetrics = make(map[string]*topicMetrics)
+	}
+	if m.handlerMetrics == nil {
+		m.handlerMetrics = make(map[string]*handlerMetrics)
+	}
+}
+
+func (m *DefaultMetrics) getTopicMetricsLocked(topic string) *topicMetrics {
+	stats := m.topicMetrics[topic]
+	if stats == nil {
+		stats = &topicMetrics{}
+		m.topicMetrics[topic] = stats
+	}
+	return stats
+}
+
+func (m *DefaultMetrics) getHandlerMetricsLocked(topic, handlerID string) *handlerMetrics {
+	stats := m.handlerMetrics[handlerID]
+	if stats == nil {
+		stats = &handlerMetrics{topic: topic}
+		m.handlerMetrics[handlerID] = stats
+	}
+	return stats
 }

@@ -207,6 +207,28 @@ topics := eventBus.GetTopics()
 subscriberCount := eventBus.GetSubscriberCount("user.action")
 ```
 
+Detailed metrics are available from the default metrics implementation:
+
+```go
+if detailed, ok := eventBus.GetMetrics().(*bus.DefaultMetrics); ok {
+    topicStats := detailed.GetTopicStats()
+    handlerStats := detailed.GetHandlerStats()
+    fmt.Println(topicStats["user.action"].ProcessedEvents)
+    fmt.Println(handlerStats)
+}
+```
+
+Prometheus integration is available as an optional subpackage:
+
+```go
+import busprom "github.com/PlutoWu-Cn/go-bus/prometheus"
+
+promMetrics := busprom.New(busprom.Config{})
+eventBus := bus.NewTyped[UserEvent](
+    bus.WithMetrics[UserEvent](promMetrics),
+)
+```
+
 ### Asynchronous Processing
 
 ```go
@@ -221,11 +243,27 @@ err := eventBus.SubscribeAsync("user.audit", func(event UserEvent) {
 }, true)
 ```
 
+### Handler Execution Control
+
+`SubscribeWithOptions` adds handler-level controls without changing the existing simple APIs:
+
+```go
+handle, err := eventBus.SubscribeWithOptions("payment.validate", func(event PaymentEvent) {
+    validatePayment(event)
+},
+    bus.HandlerTimeout(2*time.Second),
+    bus.HandlerRecoverPolicy(bus.RecoverAndStop),
+    bus.HandlerSerial(),
+    bus.HandlerPriority(bus.PriorityHigh),
+)
+```
+
 ## ✅ Behavior Contract
 
 - `Publish` ignores returned errors; use `PublishWithContext` or `PublishWithTimeout` when cancellation, timeout, or closed-bus errors matter.
 - Synchronous handlers run in the current goroutine by default; asynchronous handlers run in separate goroutines, and `transactional=true` serializes calls to the same handler.
-- Handler panics are recovered, failed metrics are incremented, and the error is reported through `ErrorHandler`.
+- Handler timeouts bound how long the publish call waits; they do not forcibly stop a handler that has already started running.
+- Handler panics are recovered by default, failed metrics are incremented, and the error is reported through `ErrorHandler`; `RecoverAndStop` makes a recovered panic stop the current publish call.
 - Middleware must call `next()` to continue to the next middleware and handlers; skipping `next()` intercepts the event.
 - `SubscribeOnce` / `SubscribeOnceAsync` handlers execute successfully at most once, including when multiple one-time handlers share a topic.
 - After `Close`, the bus rejects new publish and subscribe calls; already-started async handlers are allowed to finish.
@@ -238,9 +276,9 @@ Go-Bus will keep its focus on being an in-process, type-safe, lightweight event 
 | --- | --- | --- | --- |
 | P0 | Done | Core correctness | Publish no longer holds the bus lock while running handlers; `SubscribeOnce` removal, middleware chaining, and race tests are covered |
 | P0 | Done | API contract | Error returns for `Publish` / `PublishWithContext`, panic recovery, sync/async execution, and closed-bus behavior are documented |
-| P1 | Planned | Documentation alignment | Keep README content, examples, and actual implementation behavior in sync |
-| P1 | Planned | Observability | Add per-topic and per-handler published, processed, failed, and duration metrics, plus an optional Prometheus adapter |
-| P1 | Planned | Execution control | Support handler-level timeout, recover policy, serial/concurrent execution, and max concurrency |
+| P1 | Done | Documentation alignment | README content now documents the current P1 behavior and examples |
+| P1 | Done | Observability | Per-topic and per-handler published, processed, failed, and duration metrics are available, with an optional Prometheus adapter |
+| P1 | Done | Execution control | `SubscribeWithOptions` supports handler-level timeout, recover policy, async/serial execution, and max concurrency |
 | P2 | Planned | Result collection | Borrow from Blinker and add a `PublishCollect`-style API for collecting handler results or errors |
 | P2 | Planned | Topic enhancements | Add wildcard topics, hierarchical topics, and no-subscriber hooks for routing and debugging |
 | P2 | Planned | Integration examples | Add practical examples for `net/http`, Gin, CLI apps, and workers |
