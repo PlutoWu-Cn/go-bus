@@ -414,7 +414,14 @@ func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event
 			continue
 		}
 
+		bus.lock.RLock()
+		if bus.closed {
+			bus.lock.RUnlock()
+			return fmt.Errorf("event bus is closed")
+		}
 		bus.wg.Add(1)
+		bus.lock.RUnlock()
+
 		if handler.transactional {
 			handler.Lock()
 		}
@@ -561,20 +568,31 @@ func (bus *EventBus[T]) GetSubscriberCount(topic string) int {
 // Close gracefully shuts down the event bus
 func (bus *EventBus[T]) Close() error {
 	bus.lock.Lock()
-	defer bus.lock.Unlock()
 
 	if bus.closed {
+		bus.lock.Unlock()
 		return fmt.Errorf("event bus already closed")
 	}
 
 	bus.closed = true
 	close(bus.closeCh)
+	bus.lock.Unlock()
 
 	// Wait for all async operations to complete
 	bus.wg.Wait()
 
 	// Clear all handlers
+	bus.lock.Lock()
+	subscriberCount := 0
+	for _, handlers := range bus.handlers {
+		subscriberCount += len(handlers)
+	}
 	bus.handlers = make(map[string][]*eventHandler[T])
+	bus.lock.Unlock()
+
+	for i := 0; i < subscriberCount; i++ {
+		bus.metrics.DecrementSubscribers()
+	}
 
 	return nil
 }
