@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -26,6 +27,9 @@ type Option[T any] func(*EventBus[T])
 // WithMetrics allows custom Metrics implementation
 func WithMetrics[T any](metrics Metrics) Option[T] {
 	return func(b *EventBus[T]) {
+		if metrics == nil {
+			return
+		}
 		b.metrics = metrics
 	}
 }
@@ -47,6 +51,9 @@ func WithErrorHandler[T any](handler ErrorHandler) Option[T] {
 // WithMiddleware adds a middleware to the EventBus
 func WithMiddleware[T any](middleware EventMiddleware[any]) Option[T] {
 	return func(b *EventBus[T]) {
+		if middleware == nil {
+			return
+		}
 		b.middlewares = append(b.middlewares, middleware)
 	}
 }
@@ -64,7 +71,13 @@ func NewTyped[T any](opts ...Option[T]) Bus[T] {
 		closeCh:     make(chan struct{}),
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(b)
+	}
+	if b.metrics == nil {
+		b.metrics = &DefaultMetrics{}
 	}
 	return Bus[T](b)
 }
@@ -76,6 +89,14 @@ func New(opts ...Option[any]) Bus[any] {
 
 // doSubscribe handles the subscription logic and is utilized by the public Subscribe functions
 func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHandler[T]) error {
+	if fn == nil {
+		return fmt.Errorf("event handler is nil")
+	}
+	if handler.ctx == nil {
+		handler.ctx = context.Background()
+	}
+	handler.topic = topic
+
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
 
@@ -113,6 +134,14 @@ func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHand
 
 // doSubscribeWithHandle handles the subscription logic and returns a handle
 func (bus *EventBus[T]) doSubscribeWithHandle(topic string, fn func(T), handler *eventHandler[T]) *Handle[T] {
+	if fn == nil {
+		return nil
+	}
+	if handler.ctx == nil {
+		handler.ctx = context.Background()
+	}
+	handler.topic = topic
+
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
 
@@ -296,6 +325,14 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 		return fmt.Errorf("event bus is closed")
 	}
 	handlers := append([]*eventHandler[T](nil), bus.handlers[topic]...)
+	if topic != "*" {
+		if wildcardHandlers := bus.handlers["*"]; len(wildcardHandlers) > 0 {
+			handlers = append(handlers, wildcardHandlers...)
+			sort.SliceStable(handlers, func(i, j int) bool {
+				return handlers[i].priority > handlers[j].priority
+			})
+		}
+	}
 	middlewares := append([]EventMiddleware[any](nil), bus.middlewares...)
 	bus.lock.RUnlock()
 
@@ -370,7 +407,7 @@ func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event
 		}
 
 		if handler.flagOnce {
-			bus.removeHandler(topic, handler)
+			bus.removeHandler(handler.topic, handler)
 		}
 
 		if !handler.async {
@@ -523,6 +560,10 @@ func (bus *EventBus[T]) SetErrorHandler(handler ErrorHandler) {
 
 // AddMiddleware adds middleware to the bus
 func (bus *EventBus[T]) AddMiddleware(middleware EventMiddleware[any]) {
+	if middleware == nil {
+		return
+	}
+
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
 	bus.middlewares = append(bus.middlewares, middleware)

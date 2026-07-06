@@ -46,6 +46,7 @@ func (h *Handle[T]) IsActive() bool {
 
 // eventHandler represents an internal event handler
 type eventHandler[T any] struct {
+	topic         string
 	callBack      func(T)
 	flagOnce      bool
 	async         bool
