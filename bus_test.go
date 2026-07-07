@@ -320,6 +320,11 @@ func TestPublishWithTimeout(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 	defer bus.Close()
 
+	var errorCount int32
+	bus.SetErrorHandler(func(err *EventError) {
+		atomic.AddInt32(&errorCount, 1)
+	})
+
 	// Subscribe a synchronous handler that will block for a long time
 	bus.SubscribeWithHandle("timeout.test", func(event TestEvent) {
 		// Simulate blocking operation
@@ -338,6 +343,9 @@ func TestPublishWithTimeout(t *testing.T) {
 	// Verify it returns around timeout time
 	if elapsed > 80*time.Millisecond {
 		t.Errorf("Expected timeout around 50ms, but took %v", elapsed)
+	}
+	if count := atomic.LoadInt32(&errorCount); count != 1 {
+		t.Errorf("Expected timeout to be reported once, got %d reports", count)
 	}
 }
 
@@ -385,6 +393,10 @@ func TestBusClose(t *testing.T) {
 	bus := NewTyped[TestEvent]()
 
 	var processed int32
+	var errorCount int32
+	bus.SetErrorHandler(func(err *EventError) {
+		atomic.AddInt32(&errorCount, 1)
+	})
 
 	// Subscribe handler
 	bus.SubscribeWithHandle("close.test", func(event TestEvent) {
@@ -404,6 +416,10 @@ func TestBusClose(t *testing.T) {
 	err = bus.PublishWithContext(context.Background(), "close.test", TestEvent{ID: "after_close", Value: 2})
 	if err == nil {
 		t.Error("Expected error when publishing to closed bus")
+	}
+	bus.Publish("close.test", TestEvent{ID: "after_close_publish", Value: 3})
+	if count := atomic.LoadInt32(&errorCount); count != 2 {
+		t.Errorf("Expected closed publish errors to be reported twice, got %d reports", count)
 	}
 
 	// Try to subscribe (should fail)
@@ -729,6 +745,36 @@ func TestMultipleSubscribeOnceSameTopic(t *testing.T) {
 	}
 	if bus.HasCallback("once.multi.test") {
 		t.Error("Expected no callback after once handlers run")
+	}
+}
+
+func TestSubscribeOnceConcurrentPublishRunsOnce(t *testing.T) {
+	bus := NewTyped[TestEvent]()
+	defer bus.Close()
+
+	var count int32
+	if err := bus.SubscribeOnce("once.concurrent.test", func(event TestEvent) {
+		atomic.AddInt32(&count, 1)
+	}); err != nil {
+		t.Fatalf("Unexpected subscribe error: %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			bus.Publish("once.concurrent.test", TestEvent{ID: fmt.Sprintf("event-%d", i), Value: i})
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&count); got != 1 {
+		t.Fatalf("Expected once handler to run once under concurrent publish, got %d", got)
 	}
 }
 

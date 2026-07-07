@@ -89,88 +89,22 @@ func New(opts ...Option[any]) Bus[any] {
 
 // doSubscribe handles the subscription logic and is utilized by the public Subscribe functions
 func (bus *EventBus[T]) doSubscribe(topic string, fn func(T), handler *eventHandler[T]) error {
-	if fn == nil {
-		return fmt.Errorf("event handler is nil")
-	}
-	if handler.ctx == nil {
-		handler.ctx = context.Background()
-	}
-	handler.topic = topic
-
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
 
-	if bus.closed {
-		return fmt.Errorf("event bus is closed")
+	if err := bus.addHandlerLocked(topic, fn, handler); err != nil {
+		return err
 	}
-
-	// Insert handler based on priority
-	handlers := bus.handlers[topic]
-	inserted := false
-
-	for i, h := range handlers {
-		if handler.priority > h.priority {
-			// Insert before this handler
-			handlers = append(handlers[:i], append([]*eventHandler[T]{handler}, handlers[i:]...)...)
-			inserted = true
-			break
-		}
-	}
-
-	if !inserted {
-		handlers = append(handlers, handler)
-	}
-
-	bus.handlers[topic] = handlers
-	bus.metrics.IncrementSubscribers()
-
-	// Log subscription
-	if bus.logger != nil {
-		bus.logger.Debug("Handler subscribed to topic '%s' with priority %v", topic, handler.priority)
-	}
-
 	return nil
 }
 
 // doSubscribeWithHandle handles the subscription logic and returns a handle
 func (bus *EventBus[T]) doSubscribeWithHandle(topic string, fn func(T), handler *eventHandler[T]) *Handle[T] {
-	if fn == nil {
-		return nil
-	}
-	if handler.ctx == nil {
-		handler.ctx = context.Background()
-	}
-	handler.topic = topic
-
 	bus.lock.Lock()
 	defer bus.lock.Unlock()
 
-	if bus.closed {
+	if bus.addHandlerLocked(topic, fn, handler) != nil {
 		return nil
-	}
-
-	// Insert handler based on priority (same logic as doSubscribe)
-	handlers := bus.handlers[topic]
-	inserted := false
-
-	for i, h := range handlers {
-		if handler.priority > h.priority {
-			handlers = append(handlers[:i], append([]*eventHandler[T]{handler}, handlers[i:]...)...)
-			inserted = true
-			break
-		}
-	}
-
-	if !inserted {
-		handlers = append(handlers, handler)
-	}
-
-	bus.handlers[topic] = handlers
-	bus.metrics.IncrementSubscribers()
-
-	// Log subscription
-	if bus.logger != nil {
-		bus.logger.Debug("Handler subscribed to topic '%s' with priority %v (with handle)", topic, handler.priority)
 	}
 
 	return &Handle[T]{
@@ -181,6 +115,42 @@ func (bus *EventBus[T]) doSubscribeWithHandle(topic string, fn func(T), handler 
 		filter:   handler.filter,
 		ctx:      handler.ctx,
 	}
+}
+
+func (bus *EventBus[T]) addHandlerLocked(topic string, fn func(T), handler *eventHandler[T]) error {
+	if fn == nil {
+		return fmt.Errorf("event handler is nil")
+	}
+	if bus.closed {
+		return fmt.Errorf("event bus is closed")
+	}
+	if handler.ctx == nil {
+		handler.ctx = context.Background()
+	}
+	handler.topic = topic
+
+	handlers := bus.handlers[topic]
+	inserted := false
+
+	for i, h := range handlers {
+		if handler.priority > h.priority {
+			handlers = append(handlers[:i], append([]*eventHandler[T]{handler}, handlers[i:]...)...)
+			inserted = true
+			break
+		}
+	}
+
+	if !inserted {
+		handlers = append(handlers, handler)
+	}
+
+	bus.handlers[topic] = handlers
+	bus.metrics.IncrementSubscribers()
+
+	if bus.logger != nil {
+		bus.logger.Debug("Handler subscribed to topic '%s' with priority %v", topic, handler.priority)
+	}
+	return nil
 }
 
 // Subscribe subscribes to a topic.
@@ -314,15 +284,24 @@ func (bus *EventBus[T]) HasCallback(topic string) bool {
 
 // Publish executes callback defined for a topic.
 func (bus *EventBus[T]) Publish(topic string, event T) {
-	bus.PublishWithContext(context.Background(), topic, event)
+	_ = bus.PublishWithContext(context.Background(), topic, event)
 }
 
 // PublishWithContext publishes an event with context
 func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, event T) error {
 	bus.lock.RLock()
 	if bus.closed {
+		errorHandler := bus.errorHandler
 		bus.lock.RUnlock()
-		return fmt.Errorf("event bus is closed")
+		err := fmt.Errorf("event bus is closed")
+		if errorHandler != nil {
+			errorHandler(&EventError{
+				Topic: topic,
+				Event: event,
+				Err:   err,
+			})
+		}
+		return err
 	}
 	handlers := append([]*eventHandler[T](nil), bus.handlers[topic]...)
 	if topic != "*" {
@@ -334,6 +313,7 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 		}
 	}
 	middlewares := append([]EventMiddleware[any](nil), bus.middlewares...)
+	errorHandler := bus.errorHandler
 	bus.lock.RUnlock()
 
 	// Log event publishing
@@ -347,7 +327,6 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 		return bus.publishHandlers(ctx, topic, event, handlers)
 	}
 	var publishErr error
-	var middlewareErr error
 	next := func() {
 		publishErr = runHandlers()
 	}
@@ -358,7 +337,6 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 		next = func() {
 			if publishErr == nil {
 				if err := middleware(topic, event, prev); err != nil {
-					middlewareErr = err
 					publishErr = err
 				}
 			}
@@ -367,11 +345,11 @@ func (bus *EventBus[T]) PublishWithContext(ctx context.Context, topic string, ev
 	next()
 
 	if publishErr != nil {
-		if middlewareErr != nil && bus.errorHandler != nil {
-			bus.errorHandler(&EventError{
+		if errorHandler != nil {
+			errorHandler(&EventError{
 				Topic: topic,
 				Event: event,
-				Err:   middlewareErr,
+				Err:   publishErr,
 			})
 		}
 		return publishErr
@@ -407,6 +385,9 @@ func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event
 		}
 
 		if handler.flagOnce {
+			if !handler.ranOnce.CompareAndSwap(false, true) {
+				continue
+			}
 			bus.removeHandler(handler.topic, handler)
 		}
 
@@ -467,7 +448,7 @@ func (bus *EventBus[T]) publishHandlers(ctx context.Context, topic string, event
 	return nil
 }
 
-// PublishWithTimeout publishes an event with timeout
+// PublishWithTimeout limits how long PublishWithContext waits; it cannot interrupt a running handler.
 func (bus *EventBus[T]) PublishWithTimeout(topic string, event T, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

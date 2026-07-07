@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Handle represents a subscription handle that can be used to unsubscribe
@@ -54,5 +55,6 @@ type eventHandler[T any] struct {
 	priority      Priority
 	filter        EventFilter[T]
 	ctx           context.Context
+	ranOnce       atomic.Bool
 	sync.Mutex    // lock for an event handler - useful for running async callbacks serially
 }
